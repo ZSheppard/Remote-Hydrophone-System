@@ -58,7 +58,9 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+
 uint16_t dma_buffer[DMA_BUFF_LEN];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -545,7 +547,9 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	// Toggling LD3 (red) to see if it ever enters this default state
+	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
+    osDelay(50); /* Insert delay of 1ms */
   }
   /* USER CODE END 5 */
 }
