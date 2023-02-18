@@ -23,9 +23,10 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
+//#include "FFTsignal.h"
 #include "arm_math.h"
 #include "arm_const_structs.h"
-#include "testInputSignal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -35,8 +36,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-//#define FFT_Length  1024
-#define TEST_LENGTH_SAMPLES 64
+#define adc_buff_size 40
+#define data_buff_size 1024
+#define FFT_SIZE 512
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -46,41 +48,61 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
+
+TIM_HandleTypeDef htim16;
 
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-//float32_t FFT_Input_Q15_f[50];
-//float32_t aFFT_Input_Q15[50];
 
-/* -------------------------------------------------------------------
-* External Input and Output buffer Declarations for FFT Bin Example
-* ------------------------------------------------------------------- */
-//extern float32_t testInput_f32_10khz[TEST_LENGTH_SAMPLES];
-static float32_t testOutput[TEST_LENGTH_SAMPLES/2];
-float32_t adcOutput[TEST_LENGTH_SAMPLES];
-float32_t fftOutput[TEST_LENGTH_SAMPLES/2];
-/* ------------------------------------------------------------------
-* Global variables for FFT Bin Example
-* ------------------------------------------------------------------- */
-uint32_t fftSize = 32;
-uint32_t ifftFlag = 0;	//0 for FFT, 1 for Inverse FFT
-uint32_t doBitReverse = 1;
+// Variables for ADC Conversion
+uint32_t adc_buffer[adc_buff_size];
+float32_t data_buffer[data_buff_size];
+uint32_t test_buffer[] = {1,2,3,4,5};
+float32_t average, sum;
+bool flag_value, transfer_complete;
+uint16_t adc_result;
 
-/* Reference index at which max energy of bin ocuurs */
-//uint32_t refIndex = 213, testIndex = 0;
-uint32_t refIndex = 213, testIndex = 0;
+// Variables for FFT
+static float32_t testOutput[1024];
+uint32_t fft_real_length = 1024;	// Value for FFT initialization
+uint32_t fft_size = FFT_SIZE;		// Value for FFT function, not to be put in buffer description
+float32_t fft_buffer[data_buff_size], power_buffer[FFT_SIZE]; //fft_buffer be twice as large to account for complex values per sample
+float32_t bin[FFT_SIZE];			// Array of bin values
+uint32_t bin_int[FFT_SIZE];			// Array of bin integer values
+int bin_point = 0;					// Used to point to element in array
+int offset = 165; 					//variable noisefloor offset
+uint32_t expected_bin = 761, testIndex = 0;		// Expected Bin value of frequency Input and index comparator
+float32_t maxValue;					// Maximum Magnitude found in bin array
+uint32_t maxIndex = 0;				// Index location of maximum magnitude
+uint32_t ifftFlag = 0;				// 0 for FFT, 1 for inverse FFT
+uint32_t doBitReverse = 1;			// Bit reversal parameter
+
+// FFT TEST VARIABLES
+extern float32_t testInput_f32_10khz[2048];
+//extern float32_t inputSignal[512];
+uint32_t refIndex = 213;
+uint32_t fftSize = 1024;
+int adc_full, i;
+char txbuf[25];
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USB_OTG_HS_USB_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
-
+float32_t Magnitude(float32_t real, float32_t compl);
+bool FrequencyDetected(float32_t data[data_buff_size]);
+bool CheckConversionFlag(void);
+uint32_t Average_Calc(uint32_t adc[adc_buff_size]);
+void adcConversion(uint32_t adc[adc_buff_size]);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -95,9 +117,9 @@ arm_rfft_fast_instance_f32 fft_handler;
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-  uint16_t raw;
-  char msg[10];
-  //arm_float_to_q15((float32_t *)&FFT_Input_Q15_f[0], (q15_t *)&aFFT_Input_Q15[0], FFT_Length*2);
+	char uart_buf[50];
+	int uart_buf_len;
+	uint16_t timer_val;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -118,83 +140,72 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USB_OTG_HS_USB_Init();
   MX_USART3_UART_Init();
   MX_ADC1_Init();
+  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
+
+  // Say something
+  uart_buf_len = sprintf(uart_buf, "Timer test\r\n");
+  HAL_UART_Transmit(&huart3, (uint8_t *) uart_buf, uart_buf_len, 100);
+  //Start Timer
+  HAL_TIM_Base_Start(&htim16);
+
   arm_status status;
   float32_t maxValue;
 
   status = ARM_MATH_SUCCESS;
 
-  arm_rfft_fast_init_f32(&fft_handler, fftSize);
-  /* Process the data through the CFFT/CIFFT module */
- // arm_cfft_f32(&arm_cfft_sR_f32_len1024, testInput_f32_10khz, ifftFlag, doBitReverse);
-
-  ///////arm_rfft_fast_f32(&fft_handler, testInput_f32_10khz, testOutput, ifftFlag);
-
-  /* Process the data through the Complex Magnitude Module for
-  calculating the magnitude at each bin */
-  ////// arm_cmplx_mag_f32(testInput_f32_10khz, testOutput, fftSize);
-
-  /* Calculates maxValue and returns corresponding BIN value */
-  //////arm_max_f32(testOutput, fftSize, &maxValue, &testIndex);
-
-
-//  if (testIndex !=  refIndex)
-//  {
-//    status = ARM_MATH_TEST_FAILURE;
-//  }
-//
-//  /* ----------------------------------------------------------------------
-//  ** Loop here if the signals fail the PASS check.
-//  ** This denotes a test failure
-//  ** ------------------------------------------------------------------- */
-//
-//  if ( status != ARM_MATH_SUCCESS)
-//  {
-//    while (1);
-//  }
-
-
+  arm_rfft_fast_init_f32(&fft_handler, fft_real_length);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
   while (1)
   {
-	// Collect Values from ADC in adcInput
-	for(int i = 0; i < TEST_LENGTH_SAMPLES; i++){
-		HAL_ADC_Start(&hadc1);
-		HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-		adcOutput[i] = HAL_ADC_GetValue(&hadc1);
-	}
+	  // Get current time (microseconds)
+	  timer_val = __HAL_TIM_GET_COUNTER(&htim16);
+	  // Wait for 50ms
+	  HAL_Delay(50);
+	  // Get time elapsed
+	  timer_val = __HAL_TIM_GET_COUNTER(&htim16); - timer_val;
+	  // Show elapsed time
+	  uart_buf_len = sprintf(uart_buf, "%u us\r\n", timer_val);
+	  HAL_UART_Transmit(&huart3, (uint8_t *) uart_buf, uart_buf_len, 100);
+	  // Wait again so we don't flood the serial terminal
+	  HAL_Delay(1000);
 
-	//Perform 32-bit FFT on adcInput
-	arm_rfft_fast_f32(&fft_handler, adcOutput, fftOutput, ifftFlag);
+	  /*
 
-	/* Process the data through the Complex Magnitude Module for
-	calculating the magnitude at each bin */
-	arm_cmplx_mag_f32(adcOutput, fftOutput, fftSize);
+	  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
 
-	/* Calculates maxValue and returns corresponding BIN value */
-	arm_max_f32(fftOutput, fftSize, &maxValue, &testIndex);
+	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
 
-	if (testIndex !=  refIndex)
+	  // Set timer for
+
+	  for(i = 0; i < data_buff_size; i++)
 	  {
-	    status = ARM_MATH_TEST_FAILURE;
-	  }
+		  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
+		  // Call adc function to fill adc_buffer
+		  adcConversion(adc_buffer);
+		  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
 
-	  /* ----------------------------------------------------------------------
-	  ** Loop here if the signals fail the PASS check.
-	  ** This denotes a test failure
-	  ** ------------------------------------------------------------------- */
+		  // Take average of adc_buffer
+		  Average_Calc(adc_buffer);
 
-	  if ( status != ARM_MATH_SUCCESS)
-	  {
-	    while (1);
+		  // Put average in data_buffer
+		  data_buffer[i] = average;
+
+		  // Reset internal variables
+		  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+		  average = 0;
 	  }
+	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+
+	  // Call FFT function to detect frequencies
+	  FrequencyDetected(data_buffer);
 
     /* USER CODE END WHILE */
 
@@ -238,7 +249,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 70;
+  RCC_OscInitStruct.PLL.PLLN = 24;
   RCC_OscInitStruct.PLL.PLLP = 2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   RCC_OscInitStruct.PLL.PLLR = 2;
@@ -258,12 +269,12 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB3CLKDivider = RCC_APB3_DIV2;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV2;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
-  RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
+  RCC_ClkInitStruct.APB3CLKDivider = RCC_APB3_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV1;
+  RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -301,7 +312,7 @@ static void MX_ADC1_Init(void)
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DR;
+  hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DMA_CIRCULAR;
   hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
   hadc1.Init.LeftBitShift = ADC_LEFTBITSHIFT_NONE;
   hadc1.Init.OversamplingMode = DISABLE;
@@ -320,10 +331,10 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_3;
+  sConfig.Channel = ADC_CHANNEL_15;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
-  sConfig.SingleDiff = ADC_DIFFERENTIAL_ENDED;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
   sConfig.OffsetSignedSaturation = DISABLE;
@@ -334,6 +345,38 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief TIM16 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM16_Init(void)
+{
+
+  /* USER CODE BEGIN TIM16_Init 0 */
+
+  /* USER CODE END TIM16_Init 0 */
+
+  /* USER CODE BEGIN TIM16_Init 1 */
+
+  /* USER CODE END TIM16_Init 1 */
+  htim16.Instance = TIM16;
+  htim16.Init.Prescaler = 80 - 1;
+  htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim16.Init.Period = 65536 - 1;
+  htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim16.Init.RepetitionCounter = 0;
+  htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim16) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM16_Init 2 */
+
+  /* USER CODE END TIM16_Init 2 */
 
 }
 
@@ -403,6 +446,22 @@ static void MX_USB_OTG_HS_USB_Init(void)
   /* USER CODE BEGIN USB_OTG_HS_Init 2 */
 
   /* USER CODE END USB_OTG_HS_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
 
 }
 
@@ -501,6 +560,119 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void adcConversion(uint32_t adc[adc_buff_size])
+{
+	// -- Turn off Half and Full Conversion LEDs
+	//HAL_GPIO_WritePin(LD1_GPIO_Port, LD1_Pin, GPIO_PIN_RESET);
+	//HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+
+	// -- Get value for Transfer Complete flag before starting ADC
+	flag_value = false;
+	transfer_complete = false;
+
+	// Start ADC with DMA
+	HAL_ADC_Start_DMA(&hadc1, adc, adc_buff_size);
+
+	// Wait for adc_buffer to fill
+	while(flag_value != true);
+
+	// Stop ADC
+	HAL_ADC_Stop_DMA(&hadc1);
+
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+	flag_value = true;
+}
+
+
+///*
+//void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc)
+//{
+//	if(hadc == &hadc1){
+//		// -- Set Half Conversion LED1 to 1
+//		HAL_GPIO_WritePin(LD1_GPIO_Port, LD1_Pin, GPIO_PIN_SET);
+//	}
+//}
+//*/
+
+float32_t Magnitude(float32_t real, float32_t compl)
+{
+
+	float32_t sqrt_input = (real*real + compl*compl);
+	float32_t sqrt_output = 0;
+	float32_t magnitude = 0;
+	float32_t log_output = 0;
+
+	arm_sqrt_f32(sqrt_input, &sqrt_output);
+	log_output = logf(sqrt_output);
+	magnitude = 20* (log_output);
+	return magnitude;
+}
+
+bool FrequencyDetected(float32_t data[data_buff_size])
+{
+	// -- Set FrequencyDetected verification LED to 1;
+	HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
+	//HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
+
+	// Process the data through the RFFT module. Will output elements that are Real and Imaginary
+	// in fft_bufer as a single array same size as data[].
+	arm_rfft_fast_f32(&fft_handler, data, fft_buffer, ifftFlag);
+
+	// Reset bin value and offset
+	bin_point = 0;
+
+	// Calculate magnitudes of real and imaginary components
+	// Calculate absolute values and linear-to-dB
+
+
+	// Magnitude function for fft_buffer combines real and imaginary
+	// elements and outputs in buffer half the size of fft_buffer
+	// arm_cmplx_mag_squared_f32(fft_buffer, power_buffer, fft_size);
+
+	// Calculate magnitude for each bin using real and Imaginary numbers from fft_buffer output
+	 for (int i=0; i< data_buff_size; i=i+2) {
+
+		bin[bin_point] =((Magnitude(fft_buffer[i], fft_buffer[i+1])))-offset;
+		// bin[bin_point has chance of rolling back if magnitude is not greater than offset (165)
+		// If bin[point_point] rolls back set to 0
+		if ((bin[bin_point] < 0) || (bin[bin_point] > 5000))
+		{
+			bin[bin_point]=0;
+		}
+		bin_point++;
+	 }
+	// Negate DC value
+	bin[0] = 0;
+
+	// Check highest magnitude in bins
+	arm_max_f32(bin, fft_size -1, &maxValue, &maxIndex);
+
+	// Correct index
+	maxIndex += 1;
+
+	//HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+
+	// if highest magnitude is at desired bin (wanted frequency) return true
+	return false;
+}
+
+uint32_t Average_Calc(uint32_t adc[adc_buff_size])
+{
+	// Reset Internal Variable
+	sum = 0;
+
+	for(int j = 0; j < adc_buff_size; j++)
+	{
+		sum += (float32_t)adc[j];
+	}
+
+	average = sum / adc_buff_size;
+	return average;
+}
 
 /* USER CODE END 4 */
 
