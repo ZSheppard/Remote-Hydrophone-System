@@ -577,7 +577,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 /**
- * @brief
+ * @brief Function detects frequencies between (0 - 8kHz) and returns boolean
  * @param
  * @retval boolean true or false
  */
@@ -615,20 +615,32 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 	// Correct index
 	maxIndex += 1;
 
+	bool threshold_crossed = false;
+
+	// Going through bin array, checking if a magnitude crosses threshold of 150
+	for(int j=0; j < (adc_buff_size/2); j++){
+
+		if(bin[j] >= 150)
+		{
+			threshold_crossed = true;
+			break;
+		}
+	}
+
 	//HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
-	if(maxIndex != expected_bin)
+	if(threshold_crossed == true)
 	{
-		   return false;
+		   return true;
 	}
 	// if highest magnitude is at desired bin (wanted frequency) return true
-	else if(maxIndex == expected_bin)
+	else if(threshold_crossed == false)
 		{
-			return true;
+			return false;
 		}
 }
 
 /**
- * @brief
+ * @brief Returns magnitude of FFT buffer outputs
  * @param
  * @retval
  */
@@ -645,6 +657,19 @@ float32_t Magnitude(float32_t real, float32_t compl)
 	magnitude = 20* (log_output);
 	return magnitude;
 }
+
+/**
+ * @brief This function executes when adc buffer is full setting falg true
+ * @param
+ * @retval
+ */
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_8);	// Useful for debugging time to fill adc buffer
+	flag_value = true;						// Set buffer conversion complete flag
+	//HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buffer, adc_buff_size);
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */

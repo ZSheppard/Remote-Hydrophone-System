@@ -6,7 +6,8 @@
 ../Core/Src/main.c:461:13:MX_USB_OTG_HS_USB_Init	4	static
 ../Core/Src/main.c:480:13:MX_DMA_Init	16	static
 ../Core/Src/main.c:498:13:MX_GPIO_Init	64	static
-../Core/Src/main.c:584:6:FrequencyDetected	24	static
-../Core/Src/main.c:635:11:Magnitude	40	static
-../Core/Src/main.c:657:6:StartDefaultTask	16	static
-../Core/Src/main.c:674:6:Error_Handler	4	static,ignoring_inline_asm
+../Core/Src/main.c:584:6:FrequencyDetected	32	static
+../Core/Src/main.c:647:11:Magnitude	40	static
+../Core/Src/main.c:666:6:HAL_ADC_ConvCpltCallback	16	static
+../Core/Src/main.c:682:6:StartDefaultTask	16	static
+../Core/Src/main.c:699:6:Error_Handler	4	static,ignoring_inline_asm
