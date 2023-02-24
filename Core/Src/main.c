@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
@@ -26,6 +27,7 @@
 #include <stdbool.h>
 #include "arm_math.h"
 #include "arm_const_structs.h"
+#include "semphr.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,6 +63,30 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for AudioCapTask */
+osThreadId_t AudioCapTaskHandle;
+const osThreadAttr_t AudioCapTask_attributes = {
+  .name = "AudioCapTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for FFTTask */
+osThreadId_t FFTTaskHandle;
+const osThreadAttr_t FFTTask_attributes = {
+  .name = "FFTTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for AudioCapSem01 */
+osSemaphoreId_t AudioCapSem01Handle;
+const osSemaphoreAttr_t AudioCapSem01_attributes = {
+  .name = "AudioCapSem01"
+};
+/* Definitions for FFTSem02 */
+osSemaphoreId_t FFTSem02Handle;
+const osSemaphoreAttr_t FFTSem02_attributes = {
+  .name = "FFTSem02"
+};
 /* USER CODE BEGIN PV */
 
 // Variables for ADC Conversion
@@ -69,7 +95,7 @@ float32_t adc_buffer_float[adc_buff_size];
 bool flag_value, transfer_complete;
 
 // Variables for FFT
-uint32_t fft_real_length = 16;			// Value for FFT initialization
+uint32_t fft_real_length = 4096;			// Value for FFT initialization
 float32_t fft_buffer[adc_buff_size];    //fft_buffer be twice as large to account for complex values per sample
 float32_t bin[FFT_SIZE];				// Array of bin values
 uint32_t bin_int[FFT_SIZE];				// Array of bin integer values
@@ -93,6 +119,8 @@ static void MX_ADC1_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_TIM1_Init(void);
 void StartDefaultTask(void *argument);
+void StartAudioCapTask(void *argument);
+void StartFFTTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 bool FrequencyDetected(float32_t data[adc_buff_size]);
@@ -138,6 +166,10 @@ int main(void)
   MX_USART3_UART_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
+
+  HAL_TIM_Base_Start(&htim1);
+  HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_1);
+
   float32_t maxValue;
 
   // Initialize RFFT
@@ -152,7 +184,18 @@ int main(void)
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
+  /* Create the semaphores(s) */
+  /* creation of AudioCapSem01 */
+  AudioCapSem01Handle = osSemaphoreNew(1, 1, &AudioCapSem01_attributes);
+
+  /* creation of FFTSem02 */
+  FFTSem02Handle = osSemaphoreNew(1, 1, &FFTSem02_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
+
+  // Initialize FFTSem value to 0 before starting code
+  osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
+
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
 
@@ -167,6 +210,12 @@ int main(void)
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* creation of AudioCapTask */
+  AudioCapTaskHandle = osThreadNew(StartAudioCapTask, NULL, &AudioCapTask_attributes);
+
+  /* creation of FFTTask */
+  FFTTaskHandle = osThreadNew(StartFFTTask, NULL, &FFTTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -226,7 +275,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 20;
+  RCC_OscInitStruct.PLL.PLLN = 24;
   RCC_OscInitStruct.PLL.PLLP = 2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   RCC_OscInitStruct.PLL.PLLR = 2;
@@ -244,14 +293,14 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2
                               |RCC_CLOCKTYPE_D3PCLK1|RCC_CLOCKTYPE_D1PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV2;
+  RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB3CLKDivider = RCC_APB3_DIV2;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -287,8 +336,8 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.NbrOfConversion = 1;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIG_T1_TRGO;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISINGFALLING;
   hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DMA_ONESHOT;
   hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
   hadc1.Init.LeftBitShift = ADC_LEFTBITSHIFT_NONE;
@@ -583,9 +632,6 @@ static void MX_GPIO_Init(void)
  */
 bool FrequencyDetected(float32_t data[adc_buff_size])
 {
-	// -- Set FrequencyDetected verification LED to 1;
-	HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
-
 	// Process the data through the RFFT module. Will output elements that are Real and Imaginary
 	// in fft_bufer as a single array same size as data[].
 	//arm_rfft_fast_f32(&fft_handler, (float32_t *) data, fft_buffer, ifftFlag);
@@ -610,7 +656,7 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 	bin[0] = 0;
 
 	// Check highest magnitude in bins
-	arm_max_f32(bin, FFT_SIZE -1, &maxValue, &maxIndex);
+	arm_max_f32(bin, FFT_SIZE, &maxValue, &maxIndex);
 
 	// Correct index
 	maxIndex += 1;
@@ -620,7 +666,7 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 	// Going through bin array, checking if a magnitude crosses threshold of 150
 	for(int j=0; j < (adc_buff_size/2); j++){
 
-		if(bin[j] >= 150)
+		if(bin[j] >= 170)
 		{
 			threshold_crossed = true;
 			break;
@@ -641,8 +687,8 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 
 /**
  * @brief Returns magnitude of FFT buffer outputs
- * @param
- * @retval
+ * @param Real & Complex elements of FFT output
+ * @retval Magnitude at specific frequency
  */
 float32_t Magnitude(float32_t real, float32_t compl)
 {
@@ -659,14 +705,14 @@ float32_t Magnitude(float32_t real, float32_t compl)
 }
 
 /**
- * @brief This function executes when adc buffer is full setting falg true
+ * @brief This function executes when adc buffer is full setting flag true
  * @param
  * @retval
  */
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
-	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_8);	// Useful for debugging time to fill adc buffer
-	flag_value = true;						// Set buffer conversion complete flag
+	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_8);
+	flag_value = true;			// Set buffer conversion complete flag
 	//HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buffer, adc_buff_size);
 }
 
@@ -687,9 +733,115 @@ void StartDefaultTask(void *argument)
   {
 	// Toggling LD3 (red) to see if it ever enters this default state
 	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
-    osDelay(50); /* Insert delay of 50ms */
+    osDelay(500); /* Insert delay of 50ms */
   }
   /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartAudioCapTask */
+/**
+* @brief Function implementing the AudioCapTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartAudioCapTask */
+void StartAudioCapTask(void *argument)
+{
+  /* USER CODE BEGIN StartAudioCapTask */
+  /* Infinite loop */
+  for(;;)
+  {
+	  osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
+
+	  /* Test Pin */
+	  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+	  //osDelay(500);
+
+	  // Start ADC
+	  HAL_ADC_Start_DMA(&hadc1, adc_buffer, adc_buff_size);
+
+      // HAL_DMA_PollForTransfer(&hadc1, adc_buff_size -1, HAL_MAX_DELAY);
+
+	  // Wait for adc_buffer to fill
+	  while(flag_value != true);
+	  flag_value = false;
+
+	  // Stop ADC
+	  HAL_ADC_Stop_DMA(&hadc1);
+
+	  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+
+	  // Call FFT function to detect frequencies
+	  for(int i = 0; i < adc_buff_size; i++){
+		  adc_buffer_float[i] = (float32_t)adc_buffer[i];
+	  }
+	  osSemaphoreRelease(FFTSem02Handle);
+  }
+
+  // In case we accidentally exit from task loop
+  osThreadTerminate(NULL);
+  /* USER CODE END StartAudioCapTask */
+}
+
+/* USER CODE BEGIN Header_StartFFTTask */
+/**
+* @brief Function implementing the FFTTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartFFTTask */
+void StartFFTTask(void *argument)
+{
+  /* USER CODE BEGIN StartFFTTask */
+  /* Infinite loop */
+  for(;;)
+  {
+	 osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
+	 HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1);
+	 //osDelay(500);
+
+	 /* Reset frequency_detected bool */
+	 frequency_detected = false;
+
+	 /* Call FFT function that returns true if freqs between 0-8kHz are detected */
+	 frequency_detected = FrequencyDetected(adc_buffer_float);
+
+	 /*
+	 if(frequency_detected == true){
+	 // release semaphore for record task
+	 }
+	 else {
+	 osSemaphoreRelease(AudioCapSem01Handle);
+	 }
+	 */
+
+	 osSemaphoreRelease(AudioCapSem01Handle);
+  }
+
+  // In case we accidentally exit from task loop
+  osThreadTerminate(NULL);
+  /* USER CODE END StartFFTTask */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM2 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM2) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
 }
 
 /**
