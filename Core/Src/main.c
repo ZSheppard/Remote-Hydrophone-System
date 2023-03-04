@@ -77,6 +77,13 @@ const osThreadAttr_t FFTTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for RecordTask */
+osThreadId_t RecordTaskHandle;
+const osThreadAttr_t RecordTask_attributes = {
+  .name = "RecordTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
+};
 /* Definitions for AudioCapSem01 */
 osSemaphoreId_t AudioCapSem01Handle;
 const osSemaphoreAttr_t AudioCapSem01_attributes = {
@@ -106,7 +113,7 @@ float32_t maxValue;						// Maximum Magnitude found in bin array
 uint32_t maxIndex = 0;					// Index location of maximum magnitude
 uint32_t ifftFlag = 0;					// 0 for FFT, 1 for inverse FFT
 uint32_t doBitReverse = 1;				// Bit reversal parameter
-bool frequency_detected;
+bool frequency_detected = false;
 
 /* USER CODE END PV */
 
@@ -121,6 +128,7 @@ static void MX_TIM1_Init(void);
 void StartDefaultTask(void *argument);
 void StartAudioCapTask(void *argument);
 void StartFFTTask(void *argument);
+void StartRecordTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 bool FrequencyDetected(float32_t data[adc_buff_size]);
@@ -216,6 +224,9 @@ int main(void)
 
   /* creation of FFTTask */
   FFTTaskHandle = osThreadNew(StartFFTTask, NULL, &FFTTask_attributes);
+
+  /* creation of RecordTask */
+  RecordTaskHandle = osThreadNew(StartRecordTask, NULL, &RecordTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -553,8 +564,8 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
@@ -562,7 +573,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(USB_FS_PWR_EN_GPIO_Port, USB_FS_PWR_EN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
@@ -580,12 +591,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(USB_FS_PWR_EN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD3_Pin */
-  GPIO_InitStruct.Pin = LD3_Pin;
+  /*Configure GPIO pins : LD1_Pin LD3_Pin */
+  GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD3_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USB_FS_OVCR_Pin */
   GPIO_InitStruct.Pin = USB_FS_OVCR_Pin;
@@ -646,11 +657,16 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 		bin[bin_point] =((Magnitude(fft_buffer[i], fft_buffer[i+1])))-offset;
 		// bin[bin_point has chance of rolling back if magnitude is not greater than offset (165)
 		// If bin[point_point] rolls back set to 0
+
+		/*
 		if ((bin[bin_point] < 0) || (bin[bin_point] > 5000))
 		{
 			bin[bin_point]=0;
 		}
+		*/
+
 		bin_point++;
+
 	 }
 	// Negate DC value
 	bin[0] = 0;
@@ -664,9 +680,9 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 	bool threshold_crossed = false;
 
 	// Going through bin array, checking if a magnitude crosses threshold of 150
-	for(int j=0; j < (adc_buff_size/2); j++){
+	for(int j=1; j < (adc_buff_size/2); j++){
 
-		if(bin[j] >= 170)
+		if(bin[j] >= 40)
 		{
 			threshold_crossed = true;
 			break;
@@ -732,7 +748,7 @@ void StartDefaultTask(void *argument)
   for(;;)
   {
 	// Toggling LD3 (red) to see if it ever enters this default state
-	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
+	//HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
     osDelay(500); /* Insert delay of 50ms */
   }
   /* USER CODE END 5 */
@@ -754,13 +770,11 @@ void StartAudioCapTask(void *argument)
 	  osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
 
 	  /* Test Pin */
-	  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-	  //osDelay(500);
+	  // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+	  // osDelay(500);
 
 	  // Start ADC
 	  HAL_ADC_Start_DMA(&hadc1, adc_buffer, adc_buff_size);
-
-      // HAL_DMA_PollForTransfer(&hadc1, adc_buff_size -1, HAL_MAX_DELAY);
 
 	  // Wait for adc_buffer to fill
 	  while(flag_value != true);
@@ -773,7 +787,7 @@ void StartAudioCapTask(void *argument)
 
 	  // Call FFT function to detect frequencies
 	  for(int i = 0; i < adc_buff_size; i++){
-		  adc_buffer_float[i] = (float32_t)adc_buffer[i];
+		  adc_buffer_float[i] = adc_buffer[i];
 	  }
 	  osSemaphoreRelease(FFTSem02Handle);
   }
@@ -801,10 +815,15 @@ void StartFFTTask(void *argument)
 	 //osDelay(500);
 
 	 /* Reset frequency_detected bool */
-	 frequency_detected = false;
+	 //frequency_detected = false;
 
 	 /* Call FFT function that returns true if freqs between 0-8kHz are detected */
 	 frequency_detected = FrequencyDetected(adc_buffer_float);
+
+	 if(frequency_detected == true){
+		 //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
+		 HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+	 }
 
 	 /*
 	 if(frequency_detected == true){
@@ -821,6 +840,24 @@ void StartFFTTask(void *argument)
   // In case we accidentally exit from task loop
   osThreadTerminate(NULL);
   /* USER CODE END StartFFTTask */
+}
+
+/* USER CODE BEGIN Header_StartRecordTask */
+/**
+* @brief Function implementing the RecordTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartRecordTask */
+void StartRecordTask(void *argument)
+{
+  /* USER CODE BEGIN StartRecordTask */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartRecordTask */
 }
 
 /**
