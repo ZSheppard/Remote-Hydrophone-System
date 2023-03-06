@@ -39,6 +39,7 @@
 /* USER CODE BEGIN PD */
 
 #define adc_buff_size 4096
+#define send_buff_size 245760/8
 #define FFT_SIZE (adc_buff_size/2)
 
 /* USER CODE END PD */
@@ -55,13 +56,14 @@ DMA_HandleTypeDef hdma_adc1;
 TIM_HandleTypeDef htim1;
 
 UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart3_tx;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for AudioCapTask */
 osThreadId_t AudioCapTaskHandle;
@@ -77,10 +79,10 @@ const osThreadAttr_t FFTTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for RecordTask */
-osThreadId_t RecordTaskHandle;
-const osThreadAttr_t RecordTask_attributes = {
-  .name = "RecordTask",
+/* Definitions for SendDataTask */
+osThreadId_t SendDataTaskHandle;
+const osThreadAttr_t SendDataTask_attributes = {
+  .name = "SendDataTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityBelowNormal,
 };
@@ -94,11 +96,20 @@ osSemaphoreId_t FFTSem02Handle;
 const osSemaphoreAttr_t FFTSem02_attributes = {
   .name = "FFTSem02"
 };
+/* Definitions for SendDataSem03 */
+osSemaphoreId_t SendDataSem03Handle;
+const osSemaphoreAttr_t SendDataSem03_attributes = {
+  .name = "SendDataSem03"
+};
 /* USER CODE BEGIN PV */
 
 // Variables for ADC Conversion
 uint32_t adc_buffer[adc_buff_size];
 float32_t adc_buffer_float[adc_buff_size];
+uint32_t send_buffer[send_buff_size];
+float32_t send_buffer_float[send_buff_size];
+
+bool recording_mode = false;
 bool flag_value, transfer_complete;
 
 // Variables for FFT
@@ -115,6 +126,10 @@ uint32_t ifftFlag = 0;					// 0 for FFT, 1 for inverse FFT
 uint32_t doBitReverse = 1;				// Bit reversal parameter
 bool frequency_detected = false;
 
+// Counter for counting how many times we send 1.875 seconds worth of data
+int counter = 0;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -128,7 +143,7 @@ static void MX_TIM1_Init(void);
 void StartDefaultTask(void *argument);
 void StartAudioCapTask(void *argument);
 void StartFFTTask(void *argument);
-void StartRecordTask(void *argument);
+void StartSendDataTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 bool FrequencyDetected(float32_t data[adc_buff_size]);
@@ -199,10 +214,14 @@ int main(void)
   /* creation of FFTSem02 */
   FFTSem02Handle = osSemaphoreNew(1, 1, &FFTSem02_attributes);
 
+  /* creation of SendDataSem03 */
+  SendDataSem03Handle = osSemaphoreNew(1, 1, &SendDataSem03_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
 
-  // Initialize FFTSem value to 0 before starting code
+  // Initialize Sem values other than AudioCap to 0 before starting code
   osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
+  osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
 
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -225,8 +244,8 @@ int main(void)
   /* creation of FFTTask */
   FFTTaskHandle = osThreadNew(StartFFTTask, NULL, &FFTTask_attributes);
 
-  /* creation of RecordTask */
-  RecordTaskHandle = osThreadNew(StartRecordTask, NULL, &RecordTask_attributes);
+  /* creation of SendDataTask */
+  SendDataTaskHandle = osThreadNew(StartSendDataTask, NULL, &SendDataTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -547,6 +566,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
 
 }
 
@@ -774,7 +796,12 @@ void StartAudioCapTask(void *argument)
 	  // osDelay(500);
 
 	  // Start ADC
-	  HAL_ADC_Start_DMA(&hadc1, adc_buffer, adc_buff_size);
+	  if (recording_mode)
+		  // ADC captures data for sending data
+		  HAL_ADC_Start_DMA(&hadc1, send_buffer, send_buff_size);
+	  else
+		  // ADC captures data for FFT
+		  HAL_ADC_Start_DMA(&hadc1, adc_buffer, adc_buff_size);
 
 	  // Wait for adc_buffer to fill
 	  while(flag_value != true);
@@ -785,11 +812,24 @@ void StartAudioCapTask(void *argument)
 
 	  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
 
-	  // Call FFT function to detect frequencies
-	  for(int i = 0; i < adc_buff_size; i++){
-		  adc_buffer_float[i] = adc_buffer[i];
+	  if(recording_mode)
+	  {
+		  // Call FFT function to detect frequencies
+		  for(int i = 0; i < send_buff_size; i++){
+			  send_buffer_float[i] = send_buffer[i];
+		  }
+		  // Send data task semaphore
+		  osSemaphoreRelease(SendDataSem03Handle);
 	  }
-	  osSemaphoreRelease(FFTSem02Handle);
+	  else
+	  {
+		  // Call FFT function to detect frequencies
+		  for(int i = 0; i < adc_buff_size; i++){
+			  adc_buffer_float[i] = adc_buffer[i];
+		  }
+		  // Check if data is whale or not
+		  osSemaphoreRelease(FFTSem02Handle);
+	  }
   }
 
   // In case we accidentally exit from task loop
@@ -825,14 +865,11 @@ void StartFFTTask(void *argument)
 		 HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
 	 }
 
-	 /*
+
 	 if(frequency_detected == true){
-	 // release semaphore for record task
+		 recording_mode = true;
+		 // release semaphore for record task
 	 }
-	 else {
-	 osSemaphoreRelease(AudioCapSem01Handle);
-	 }
-	 */
 
 	 osSemaphoreRelease(AudioCapSem01Handle);
   }
@@ -842,22 +879,35 @@ void StartFFTTask(void *argument)
   /* USER CODE END StartFFTTask */
 }
 
-/* USER CODE BEGIN Header_StartRecordTask */
+/* USER CODE BEGIN Header_StartSendDataTask */
 /**
-* @brief Function implementing the RecordTask thread.
+* @brief Function implementing the SendDataTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartRecordTask */
-void StartRecordTask(void *argument)
+/* USER CODE END Header_StartSendDataTask */
+void StartSendDataTask(void *argument)
 {
-  /* USER CODE BEGIN StartRecordTask */
+  /* USER CODE BEGIN StartSendDataTask */
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
+
+	// Sending data via UART
+	HAL_UART_Transmit_DMA(&huart3, send_buffer_float, send_buff_size);
+
+
+	counter++;
+	if (counter == 8)
+	{
+		counter = 0;
+		recording_mode = false;
+	}
+	osSemaphoreRelease(AudioCapSem01Handle);
+
   }
-  /* USER CODE END StartRecordTask */
+  /* USER CODE END StartSendDataTask */
 }
 
 /**
