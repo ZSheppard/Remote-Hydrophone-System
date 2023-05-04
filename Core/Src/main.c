@@ -257,7 +257,6 @@ int main(void)
 
   /* Start scheduler */
   osKernelStart();
-
   /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -291,10 +290,6 @@ void SystemClock_Config(void)
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
 
   while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
-
-  /** Macro to configure the PLL clock source
-  */
-  __HAL_RCC_PLL_PLLSOURCE_CONFIG(RCC_PLLSOURCE_HSE);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -580,6 +575,8 @@ static void MX_DMA_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+/* USER CODE BEGIN MX_GPIO_Init_1 */
+/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -654,6 +651,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+/* USER CODE BEGIN MX_GPIO_Init_2 */
+/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -701,7 +700,7 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 
 	bool threshold_crossed = false;
 
-	// Going through bin array, checking if a magnitude crosses threshold of 150
+	// Going through bin array, checking if a magnitude crosses threshold of 40
 	for(int j=1; j < (adc_buff_size/2); j++){
 
 		if(bin[j] >= 40)
@@ -771,7 +770,7 @@ void StartDefaultTask(void *argument)
   {
 	// Toggling LD3 (red) to see if it ever enters this default state
 	//HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
-    osDelay(500); /* Insert delay of 50ms */
+    //osDelay(500); /* Insert delay of 50ms */
   }
   /* USER CODE END 5 */
 }
@@ -796,11 +795,12 @@ void StartAudioCapTask(void *argument)
 	  // osDelay(500);
 
 	  // Start ADC
+
+	  // ADC captures data for sending data
 	  if (recording_mode)
-		  // ADC captures data for sending data
 		  HAL_ADC_Start_DMA(&hadc1, send_buffer, send_buff_size);
+	  // ADC captures data for FFT
 	  else
-		  // ADC captures data for FFT
 		  HAL_ADC_Start_DMA(&hadc1, adc_buffer, adc_buff_size);
 
 	  // Wait for adc_buffer to fill
@@ -861,8 +861,8 @@ void StartFFTTask(void *argument)
 	 frequency_detected = FrequencyDetected(adc_buffer_float);
 
 	 if(frequency_detected == true){
-		 //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
-		 HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+		 // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
+		 // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
 	 }
 
 
@@ -894,8 +894,10 @@ void StartSendDataTask(void *argument)
   {
 	osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
 
+	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
 	// Sending data via UART
 	HAL_UART_Transmit_DMA(&huart3, send_buffer_float, send_buff_size);
+
 
 
 	counter++;
@@ -903,6 +905,7 @@ void StartSendDataTask(void *argument)
 	{
 		counter = 0;
 		recording_mode = false;
+		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
 	}
 	osSemaphoreRelease(AudioCapSem01Handle);
 
