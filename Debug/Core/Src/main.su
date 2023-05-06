@@ -11,7 +11,7 @@
 ../Core/Src/main.c:749:6:HAL_ADC_ConvCpltCallback	16	static
 ../Core/Src/main.c:765:6:StartDefaultTask	16	static
 ../Core/Src/main.c:785:6:StartAudioCapTask	24	static
-../Core/Src/main.c:847:6:StartFFTTask	16	static
-../Core/Src/main.c:889:6:StartSendDataTask	16	static
-../Core/Src/main.c:924:6:HAL_TIM_PeriodElapsedCallback	16	static
-../Core/Src/main.c:941:6:Error_Handler	4	static,ignoring_inline_asm
+../Core/Src/main.c:851:6:StartFFTTask	16	static
+../Core/Src/main.c:895:6:StartSendDataTask	16	static
+../Core/Src/main.c:935:6:HAL_TIM_PeriodElapsedCallback	16	static
+../Core/Src/main.c:952:6:Error_Handler	4	static,ignoring_inline_asm

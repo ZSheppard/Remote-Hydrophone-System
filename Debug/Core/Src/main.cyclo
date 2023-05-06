@@ -11,7 +11,7 @@ main.c:730:11:Magnitude	2
 main.c:749:6:HAL_ADC_ConvCpltCallback	1
 main.c:765:6:StartDefaultTask	1
 main.c:785:6:StartAudioCapTask	6
-main.c:847:6:StartFFTTask	2
-main.c:889:6:StartSendDataTask	2
-main.c:924:6:HAL_TIM_PeriodElapsedCallback	2
-main.c:941:6:Error_Handler	1
+main.c:851:6:StartFFTTask	2
+main.c:895:6:StartSendDataTask	2
+main.c:935:6:HAL_TIM_PeriodElapsedCallback	2
+main.c:952:6:Error_Handler	1

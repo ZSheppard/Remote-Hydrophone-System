@@ -33,15 +33,15 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  14 .debug_macro  0000541d  00000000  00000000  00078770  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 15 .debug_line   00026436  00000000  00000000  0007db8d  2**0
+ 15 .debug_line   00026421  00000000  00000000  0007db8d  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 16 .debug_str    00160a5e  00000000  00000000  000a3fc3  2**0
+ 16 .debug_str    00160a49  00000000  00000000  000a3fae  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 17 .comment      000000c5  00000000  00000000  00204a21  2**0
+ 17 .comment      000000c5  00000000  00000000  002049f7  2**0
                   CONTENTS, READONLY
- 18 .debug_frame  00008234  00000000  00000000  00204ae8  2**2
+ 18 .debug_frame  00008234  00000000  00000000  00204abc  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .debug_loc    000038ec  00000000  00000000  0020cd1c  2**0
+ 19 .debug_loc    000038ec  00000000  00000000  0020ccf0  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -1902,6 +1902,7 @@ void StartAudioCapTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
+	  //wait for fft or data sending task to complete
 	  osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
  8000f80:	4b32      	ldr	r3, [pc, #200]	; (800104c <StartAudioCapTask+0xd4>)
  8000f82:	681b      	ldr	r3, [r3, #0]
@@ -1959,7 +1960,9 @@ void StartAudioCapTask(void *argument)
  8000fd0:	2b00      	cmp	r3, #0
  8000fd2:	d01d      	beq.n	8001010 <StartAudioCapTask+0x98>
 	  {
-		  // Call FFT function to detect frequencies
+		  // TODO Call FFT function to detect frequencies
+
+		  // TODO give send data task array of thew correct data type
 		  for(int i = 0; i < send_buff_size; i++){
  8000fd4:	2300      	movs	r3, #0
  8000fd6:	60fb      	str	r3, [r7, #12]
@@ -1983,7 +1986,8 @@ void StartAudioCapTask(void *argument)
  8000ffe:	f5b3 4ff0 	cmp.w	r3, #30720	; 0x7800
  8001002:	dbea      	blt.n	8000fda <StartAudioCapTask+0x62>
 		  }
-		  // Send data task semaphore
+
+		  // Start send data task
 		  osSemaphoreRelease(SendDataSem03Handle);
  8001004:	4b18      	ldr	r3, [pc, #96]	; (8001068 <StartAudioCapTask+0xf0>)
  8001006:	681b      	ldr	r3, [r3, #0]
@@ -1993,7 +1997,7 @@ void StartAudioCapTask(void *argument)
 	  }
 	  else
 	  {
-		  // Call FFT function to detect frequencies
+		  // Convert samples to float as required by FFT
 		  for(int i = 0; i < adc_buff_size; i++){
  8001010:	2300      	movs	r3, #0
  8001012:	60bb      	str	r3, [r7, #8]
@@ -2051,6 +2055,7 @@ void StartFFTTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
+	 // wait for audio cap task to complete
 	 osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
  800107c:	4b0f      	ldr	r3, [pc, #60]	; (80010bc <StartFFTTask+0x48>)
  800107e:	681b      	ldr	r3, [r3, #0]
@@ -2073,10 +2078,10 @@ void StartFFTTask(void *argument)
  800109a:	461a      	mov	r2, r3
  800109c:	4b0a      	ldr	r3, [pc, #40]	; (80010c8 <StartFFTTask+0x54>)
  800109e:	701a      	strb	r2, [r3, #0]
+	 if(frequency_detected == true){
 		 // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
 		 // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
 	 }
-
 
 	 if(frequency_detected == true){
  80010a0:	4b09      	ldr	r3, [pc, #36]	; (80010c8 <StartFFTTask+0x54>)
@@ -2090,6 +2095,7 @@ void StartFFTTask(void *argument)
 		 // release semaphore for record task
 	 }
 
+	 //start audio cap task
 	 osSemaphoreRelease(AudioCapSem01Handle);
  80010ae:	4b08      	ldr	r3, [pc, #32]	; (80010d0 <StartFFTTask+0x5c>)
  80010b0:	681b      	ldr	r3, [r3, #0]
@@ -2120,6 +2126,7 @@ void StartSendDataTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
+	//wait for send data task to complete
 	osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
  80010dc:	4b15      	ldr	r3, [pc, #84]	; (8001134 <StartSendDataTask+0x60>)
  80010de:	681b      	ldr	r3, [r3, #0]
@@ -2127,19 +2134,21 @@ void StartSendDataTask(void *argument)
  80010e4:	4618      	mov	r0, r3
  80010e6:	f00b faa7 	bl	800c638 <osSemaphoreAcquire>
 
+	// TODO modify buffer to add escape characters
+
 	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
  80010ea:	f44f 4180 	mov.w	r1, #16384	; 0x4000
  80010ee:	4812      	ldr	r0, [pc, #72]	; (8001138 <StartSendDataTask+0x64>)
  80010f0:	f004 fe3f 	bl	8005d72 <HAL_GPIO_TogglePin>
 	// Sending data via UART
+	// TODO send buffer of uint8_t not float
 	HAL_UART_Transmit_DMA(&huart3, send_buffer_float, send_buff_size);
  80010f4:	f44f 42f0 	mov.w	r2, #30720	; 0x7800
  80010f8:	4910      	ldr	r1, [pc, #64]	; (800113c <StartSendDataTask+0x68>)
  80010fa:	4811      	ldr	r0, [pc, #68]	; (8001140 <StartSendDataTask+0x6c>)
  80010fc:	f009 fdf2 	bl	800ace4 <HAL_UART_Transmit_DMA>
 
-
-
+	// get and send data for 8 cycles
 	counter++;
  8001100:	4b10      	ldr	r3, [pc, #64]	; (8001144 <StartSendDataTask+0x70>)
  8001102:	681b      	ldr	r3, [r3, #0]
@@ -2165,6 +2174,8 @@ void StartSendDataTask(void *argument)
  8001120:	4805      	ldr	r0, [pc, #20]	; (8001138 <StartSendDataTask+0x64>)
  8001122:	f004 fe26 	bl	8005d72 <HAL_GPIO_TogglePin>
 	}
+
+	//start audio cap task
 	osSemaphoreRelease(AudioCapSem01Handle);
  8001126:	4b09      	ldr	r3, [pc, #36]	; (800114c <StartSendDataTask+0x78>)
  8001128:	681b      	ldr	r3, [r3, #0]

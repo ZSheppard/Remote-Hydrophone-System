@@ -788,6 +788,7 @@ void StartAudioCapTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
+	  //wait for fft or data sending task to complete
 	  osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
 
 	  /* Test Pin */
@@ -814,16 +815,19 @@ void StartAudioCapTask(void *argument)
 
 	  if(recording_mode)
 	  {
-		  // Call FFT function to detect frequencies
+		  // TODO Call FFT function to detect frequencies
+
+		  // TODO give send data task array of thew correct data type
 		  for(int i = 0; i < send_buff_size; i++){
 			  send_buffer_float[i] = send_buffer[i];
 		  }
-		  // Send data task semaphore
+
+		  // Start send data task
 		  osSemaphoreRelease(SendDataSem03Handle);
 	  }
 	  else
 	  {
-		  // Call FFT function to detect frequencies
+		  // Convert samples to float as required by FFT
 		  for(int i = 0; i < adc_buff_size; i++){
 			  adc_buffer_float[i] = adc_buffer[i];
 		  }
@@ -850,6 +854,7 @@ void StartFFTTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
+	 // wait for audio cap task to complete
 	 osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
 	 HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1);
 	 //osDelay(500);
@@ -860,17 +865,18 @@ void StartFFTTask(void *argument)
 	 /* Call FFT function that returns true if freqs between 0-8kHz are detected */
 	 frequency_detected = FrequencyDetected(adc_buffer_float);
 
+	 // TODO second frequency detected is redundant
 	 if(frequency_detected == true){
 		 // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
 		 // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
 	 }
-
 
 	 if(frequency_detected == true){
 		 recording_mode = true;
 		 // release semaphore for record task
 	 }
 
+	 //start audio cap task
 	 osSemaphoreRelease(AudioCapSem01Handle);
   }
 
@@ -892,14 +898,17 @@ void StartSendDataTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
+	//wait for send data task to complete
 	osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
+
+	// TODO modify buffer to add escape characters
 
 	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
 	// Sending data via UART
+	// TODO send buffer of uint8_t not float
 	HAL_UART_Transmit_DMA(&huart3, send_buffer_float, send_buff_size);
 
-
-
+	// get and send data for 8 cycles
 	counter++;
 	if (counter == 8)
 	{
@@ -907,6 +916,8 @@ void StartSendDataTask(void *argument)
 		recording_mode = false;
 		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
 	}
+
+	//start audio cap task
 	osSemaphoreRelease(AudioCapSem01Handle);
 
   }
