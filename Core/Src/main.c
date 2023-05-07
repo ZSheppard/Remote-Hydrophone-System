@@ -38,8 +38,19 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define adc_buff_size 4096
-#define FFT_SIZE (adc_buff_size/2)
+//#define SEND_BUFFER_SIZE 245760/8//
+// FFT defines
+#define REAL_FFT_SIZE 4096
+#define FFT_SIZE (REAL_FFT_SIZE/2)
+
+// ADC Defines
+#define ADC_BUFFER_SIZE 4096
+
+//Transmit Defines
+#define TRANSMIT_BUFFER_SIZE ADC_BUFFER_SIZE
+#define ESCAPE_CHAR 0xFFFF
+#define START_CHAR 0xFFEE
+#define END_CHAR 0xFFFE
 
 /* USER CODE END PD */
 
@@ -54,6 +65,7 @@ DMA_HandleTypeDef hdma_adc1;
 
 TIM_HandleTypeDef htim1;
 
+UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart3;
 
 /* Definitions for defaultTask */
@@ -61,28 +73,28 @@ osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for AudioCapTask */
 osThreadId_t AudioCapTaskHandle;
 const osThreadAttr_t AudioCapTask_attributes = {
   .name = "AudioCapTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityHigh,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for FFTTask */
 osThreadId_t FFTTaskHandle;
 const osThreadAttr_t FFTTask_attributes = {
   .name = "FFTTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityHigh,
 };
-/* Definitions for RecordTask */
-osThreadId_t RecordTaskHandle;
-const osThreadAttr_t RecordTask_attributes = {
-  .name = "RecordTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
+/* Definitions for SendDataTask */
+osThreadId_t SendDataTaskHandle;
+const osThreadAttr_t SendDataTask_attributes = {
+  .name = "SendDataTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityHigh1,
 };
 /* Definitions for AudioCapSem01 */
 osSemaphoreId_t AudioCapSem01Handle;
@@ -94,26 +106,54 @@ osSemaphoreId_t FFTSem02Handle;
 const osSemaphoreAttr_t FFTSem02_attributes = {
   .name = "FFTSem02"
 };
+/* Definitions for SendDataSem03 */
+osSemaphoreId_t SendDataSem03Handle;
+const osSemaphoreAttr_t SendDataSem03_attributes = {
+  .name = "SendDataSem03"
+};
+/* Definitions for ADC_Buffer0Sem04 */
+osSemaphoreId_t ADC_Buffer0Sem04Handle;
+const osSemaphoreAttr_t ADC_Buffer0Sem04_attributes = {
+  .name = "ADC_Buffer0Sem04"
+};
+/* Definitions for ADC_Buffer1Sem05 */
+osSemaphoreId_t ADC_Buffer1Sem05Handle;
+const osSemaphoreAttr_t ADC_Buffer1Sem05_attributes = {
+  .name = "ADC_Buffer1Sem05"
+};
 /* USER CODE BEGIN PV */
 
 // Variables for ADC Conversion
-uint32_t adc_buffer[adc_buff_size];
-float32_t adc_buffer_float[adc_buff_size];
+uint32_t adc_buffer[ADC_BUFFER_SIZE];
+float32_t adc_buffer_float[ADC_BUFFER_SIZE];
+uint32_t adc_buffer_0[ADC_BUFFER_SIZE];
+uint32_t adc_buffer_1[ADC_BUFFER_SIZE];
+bool recording_mode = false;
 bool flag_value, transfer_complete;
 
 // Variables for FFT
-uint32_t fft_real_length = 4096;			// Value for FFT initialization
-float32_t fft_buffer[adc_buff_size];    //fft_buffer be twice as large to account for complex values per sample
-float32_t bin[FFT_SIZE];				// Array of bin values
-uint32_t bin_int[FFT_SIZE];				// Array of bin integer values
-int bin_point = 0;						// Used to point to element in array
-int offset = 165; 						//variable noisefloor offset
+//uint32_t fft_real_length = 4096;			      // Value for FFT initialization
+float32_t fft_buffer[REAL_FFT_SIZE];          //fft_buffer be twice as large to account for complex values per sample
+float32_t bin[FFT_SIZE];				              // Array of bin values
+uint32_t bin_int[FFT_SIZE];				            // Array of bin integer values
+int bin_point = 0;						                // Used to point to element in array
+int offset = 165; 						                //variable noisefloor offset
 uint32_t expected_bin = 511, testIndex = 0;		// Expected Bin value of frequency Input and index comparator
-float32_t maxValue;						// Maximum Magnitude found in bin array
-uint32_t maxIndex = 0;					// Index location of maximum magnitude
-uint32_t ifftFlag = 0;					// 0 for FFT, 1 for inverse FFT
-uint32_t doBitReverse = 1;				// Bit reversal parameter
+float32_t maxValue;						                // Maximum Magnitude found in bin array
+uint32_t maxIndex = 0;					              // Index location of maximum magnitude
+uint32_t ifftFlag = 0;					              // 0 for FFT, 1 for inverse FFT
+uint32_t doBitReverse = 1;				            // Bit reversal parameter
 bool frequency_detected = false;
+
+// Variables for sending data
+int counter = 0; // Counter for counting how many times we send 1.875 seconds worth of data
+
+//local global buffer for copy of every other sample from the ADC
+volatile int32_t adc_buffer_copy[ADC_BUFFER_SIZE];
+
+// create global buffer to hold transmit data
+volatile uint8_t transmit_buffer[TRANSMIT_BUFFER_SIZE];
+
 
 /* USER CODE END PV */
 
@@ -125,13 +165,14 @@ static void MX_USB_OTG_HS_USB_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_UART4_Init(void);
 void StartDefaultTask(void *argument);
 void StartAudioCapTask(void *argument);
 void StartFFTTask(void *argument);
-void StartRecordTask(void *argument);
+void StartSendDataTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-bool FrequencyDetected(float32_t data[adc_buff_size]);
+bool FrequencyDetected(float32_t data[REAL_FFT_SIZE]);
 float32_t Magnitude(float32_t real, float32_t compl);
 /* USER CODE END PFP */
 
@@ -173,15 +214,16 @@ int main(void)
   MX_ADC1_Init();
   MX_USART3_UART_Init();
   MX_TIM1_Init();
+  MX_UART4_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_TIM_Base_Start(&htim1);
   HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_1);
 
-  float32_t maxValue;
+  //float32_t maxValue;
 
   // Initialize RFFT
-  arm_rfft_fast_init_f32(&fft_handler, adc_buff_size);
+  arm_rfft_fast_init_f32(&fft_handler, REAL_FFT_SIZE);
 
   /* USER CODE END 2 */
 
@@ -199,10 +241,20 @@ int main(void)
   /* creation of FFTSem02 */
   FFTSem02Handle = osSemaphoreNew(1, 1, &FFTSem02_attributes);
 
+  /* creation of SendDataSem03 */
+  SendDataSem03Handle = osSemaphoreNew(1, 1, &SendDataSem03_attributes);
+
+  /* creation of ADC_Buffer0Sem04 */
+  ADC_Buffer0Sem04Handle = osSemaphoreNew(1, 1, &ADC_Buffer0Sem04_attributes);
+
+  /* creation of ADC_Buffer1Sem05 */
+  ADC_Buffer1Sem05Handle = osSemaphoreNew(1, 1, &ADC_Buffer1Sem05_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
 
-  // Initialize FFTSem value to 0 before starting code
+  // Initialize Sem values other than AudioCap to 0 before starting code
   osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
+  osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
 
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -225,8 +277,8 @@ int main(void)
   /* creation of FFTTask */
   FFTTaskHandle = osThreadNew(StartFFTTask, NULL, &FFTTask_attributes);
 
-  /* creation of RecordTask */
-  RecordTaskHandle = osThreadNew(StartRecordTask, NULL, &RecordTask_attributes);
+  /* creation of SendDataTask */
+  SendDataTaskHandle = osThreadNew(StartSendDataTask, NULL, &SendDataTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -238,7 +290,6 @@ int main(void)
 
   /* Start scheduler */
   osKernelStart();
-
   /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -272,10 +323,6 @@ void SystemClock_Config(void)
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
 
   while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
-
-  /** Macro to configure the PLL clock source
-  */
-  __HAL_RCC_PLL_PLLSOURCE_CONFIG(RCC_PLLSOURCE_HSE);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -466,6 +513,54 @@ static void MX_TIM1_Init(void)
 }
 
 /**
+  * @brief UART4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_UART4_Init(void)
+{
+
+  /* USER CODE BEGIN UART4_Init 0 */
+
+  /* USER CODE END UART4_Init 0 */
+
+  /* USER CODE BEGIN UART4_Init 1 */
+
+  /* USER CODE END UART4_Init 1 */
+  huart4.Instance = UART4;
+  huart4.Init.BaudRate = 430000;
+  huart4.Init.WordLength = UART_WORDLENGTH_8B;
+  huart4.Init.StopBits = UART_STOPBITS_1;
+  huart4.Init.Parity = UART_PARITY_NONE;
+  huart4.Init.Mode = UART_MODE_TX_RX;
+  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart4.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart4.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart4.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_HalfDuplex_Init(&huart4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart4, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart4, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN UART4_Init 2 */
+
+  /* USER CODE END UART4_Init 2 */
+
+}
+
+/**
   * @brief USART3 Initialization Function
   * @param None
   * @retval None
@@ -558,6 +653,8 @@ static void MX_DMA_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+/* USER CODE BEGIN MX_GPIO_Init_1 */
+/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -632,6 +729,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+/* USER CODE BEGIN MX_GPIO_Init_2 */
+/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -641,7 +740,7 @@ static void MX_GPIO_Init(void)
  * @param
  * @retval boolean true or false
  */
-bool FrequencyDetected(float32_t data[adc_buff_size])
+bool FrequencyDetected(float32_t data[REAL_FFT_SIZE])
 {
 	// Process the data through the RFFT module. Will output elements that are Real and Imaginary
 	// in fft_bufer as a single array same size as data[].
@@ -652,7 +751,7 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 	bin_point = 0;
 
 	// Calculate magnitude for each bin using real and Imaginary numbers from fft_buffer output
-	 for (int i=0; i< adc_buff_size; i=i+2) {
+	 for (int i=0; i< REAL_FFT_SIZE; i=i+2) {
 
 		bin[bin_point] =((Magnitude(fft_buffer[i], fft_buffer[i+1])))-offset;
 		// bin[bin_point has chance of rolling back if magnitude is not greater than offset (165)
@@ -679,8 +778,8 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 
 	bool threshold_crossed = false;
 
-	// Going through bin array, checking if a magnitude crosses threshold of 150
-	for(int j=1; j < (adc_buff_size/2); j++){
+	// Going through bin array, checking if a magnitude crosses threshold of 40
+	for(int j=1; j < (FFT_SIZE); j++){
 
 		if(bin[j] >= 40)
 		{
@@ -699,6 +798,8 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 		{
 			return false;
 		}
+
+	//add return statement
 }
 
 /**
@@ -749,7 +850,7 @@ void StartDefaultTask(void *argument)
   {
 	// Toggling LD3 (red) to see if it ever enters this default state
 	//HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
-    osDelay(500); /* Insert delay of 50ms */
+    //osDelay(500); /* Insert delay of 50ms */
   }
   /* USER CODE END 5 */
 }
@@ -764,32 +865,106 @@ void StartDefaultTask(void *argument)
 void StartAudioCapTask(void *argument)
 {
   /* USER CODE BEGIN StartAudioCapTask */
+  
+  //Fill ADC_Buffer1
+  HAL_ADC_Start_DMA(&hadc1, adc_buffer_1, ADC_BUFFER_SIZE);
+
+  //wait for it to finish
+  while(flag_value != true);
+  flag_value = false;
+
+  //set initial adc buffer
+  uint32_t adc_buffer_num = 0;
+
   /* Infinite loop */
   for(;;)
   {
-	  osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
+
+	  //set record mode REMOVE, THIS IS FOR TESTING ONLY
+	  //recording_mode = false;
+
+	  //wait for fft or data sending task to complete
+	  //osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
 
 	  /* Test Pin */
 	  // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
 	  // osDelay(500);
 
-	  // Start ADC
-	  HAL_ADC_Start_DMA(&hadc1, adc_buffer, adc_buff_size);
+	  // Start ADC using alternating buffers
+    if(adc_buffer_num == 0) {
 
-	  // Wait for adc_buffer to fill
-	  while(flag_value != true);
-	  flag_value = false;
+      //obtain adc_buffer_0
+      osSemaphoreAcquire(ADC_Buffer0Sem04Handle, osWaitForever);
 
-	  // Stop ADC
-	  HAL_ADC_Stop_DMA(&hadc1);
+      //set buffer to fill
+		  HAL_ADC_Start_DMA(&hadc1, adc_buffer_0, ADC_BUFFER_SIZE);
 
-	  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+      //release tasks to process buffer 1
+      //check for record mode
+      if (recording_mode) {
 
-	  // Call FFT function to detect frequencies
-	  for(int i = 0; i < adc_buff_size; i++){
-		  adc_buffer_float[i] = adc_buffer[i];
-	  }
-	  osSemaphoreRelease(FFTSem02Handle);
+        // Send the data
+        osSemaphoreRelease(SendDataSem03Handle);
+      }
+      else  {
+        
+        // start fft task on adc buffer 1
+        osSemaphoreRelease(FFTSem02Handle);
+      }
+
+      // Coming back from Send Data do we need to redo initializations?
+
+      //wait for buffer to fill
+      while(flag_value != true);
+      flag_value = false;
+
+      // Stop ADC
+      HAL_ADC_Stop_DMA(&hadc1);
+      
+      //release adc_buffer_0
+      osSemaphoreRelease(ADC_Buffer0Sem04Handle);
+
+      //switch to other buffer on next loop
+      adc_buffer_num = 1;
+
+      //Wait for FFT Task to Finish
+    }
+    else {
+
+      //obtain adc_buffer_1
+      osSemaphoreAcquire(ADC_Buffer1Sem05Handle, osWaitForever);
+
+      //set buffer to fill
+		  HAL_ADC_Start_DMA(&hadc1, adc_buffer_1, ADC_BUFFER_SIZE);
+
+      //release tasks to process buffer 0
+      //check for record mode
+      if (recording_mode) {
+
+        // Send the data
+        osSemaphoreRelease(SendDataSem03Handle);
+      }
+      else  {
+
+        // start fft task on adc buffer 1
+        osSemaphoreRelease(FFTSem02Handle);
+      }
+
+      // Coming back from Send Data do we need to redo initializations?
+
+      //wait for buffer to fill
+      while(flag_value != true);
+      flag_value = false;
+
+      // Stop ADC
+      HAL_ADC_Stop_DMA(&hadc1);
+
+      //release adc_buffer_1
+      osSemaphoreRelease(ADC_Buffer1Sem05Handle);
+
+      //switch to other buffer on next loop
+      adc_buffer_num = 0;
+    }
   }
 
   // In case we accidentally exit from task loop
@@ -807,34 +982,76 @@ void StartAudioCapTask(void *argument)
 void StartFFTTask(void *argument)
 {
   /* USER CODE BEGIN StartFFTTask */
+
+  uint32_t count0;
+  uint32_t count1;
+  uint32_t none_acquired;
+
   /* Infinite loop */
   for(;;)
   {
-	 osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
-	 HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1);
-	 //osDelay(500);
 
-	 /* Reset frequency_detected bool */
-	 //frequency_detected = false;
+    // wait for audio cap task to tell this task to start
+    osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
+    HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1);
+	  //osDelay(500);
 
-	 /* Call FFT function that returns true if freqs between 0-8kHz are detected */
-	 frequency_detected = FrequencyDetected(adc_buffer_float);
+    //check which adc buffer is available
+    count0 = osSemaphoreGetCount(ADC_Buffer0Sem04Handle);
+    count1 = osSemaphoreGetCount(ADC_Buffer1Sem05Handle);
+    none_acquired = 0;
 
-	 if(frequency_detected == true){
-		 //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
-		 HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-	 }
+    //acquire whichever is available
+    if(count0 == 1) {
+      osSemaphoreAcquire(ADC_Buffer0Sem04Handle, osWaitForever);
 
-	 /*
-	 if(frequency_detected == true){
-	 // release semaphore for record task
-	 }
-	 else {
-	 osSemaphoreRelease(AudioCapSem01Handle);
-	 }
-	 */
+      // Convert samples to float as required by FFT
+		  for(int i = 0; i < REAL_FFT_SIZE; i++){
+			  adc_buffer_float[i] = adc_buffer_0[i];
+		  }
+      
+      //release adc buffer
+      osSemaphoreRelease(ADC_Buffer0Sem04Handle);
+      
+    }
+    else if (count1 == 1) {
+      osSemaphoreAcquire(ADC_Buffer1Sem05Handle, osWaitForever);
 
-	 osSemaphoreRelease(AudioCapSem01Handle);
+      // Convert samples to float as required by FFT
+      for(int i = 0; i < REAL_FFT_SIZE; i++){
+			  adc_buffer_float[i] = adc_buffer_1[i];
+		  }
+
+      //release adc buffer
+      osSemaphoreRelease(ADC_Buffer1Sem05Handle);
+      
+    }
+    else {
+      none_acquired = 1;
+    }
+
+    if (!none_acquired) {
+      
+      /* Reset frequency_detected bool */
+      //frequency_detected = false; //not needed gets reasigned in frequency detected function
+
+      /* Call FFT function that returns true if freqs between 0-8kHz are detected */
+      frequency_detected = FrequencyDetected(adc_buffer_float);
+
+      // TODO second frequency detected is redundant
+      // if(frequency_detected == true){
+      //   // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
+      //   // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+      // }
+
+      if(frequency_detected == true){
+        recording_mode = true;
+        // release semaphore for record task
+      }  
+
+      //start audio cap task -- should always be running, get rid of this
+      //osSemaphoreRelease(AudioCapSem01Handle);
+    }
   }
 
   // In case we accidentally exit from task loop
@@ -842,22 +1059,180 @@ void StartFFTTask(void *argument)
   /* USER CODE END StartFFTTask */
 }
 
-/* USER CODE BEGIN Header_StartRecordTask */
+/* USER CODE BEGIN Header_StartSendDataTask */
 /**
-* @brief Function implementing the RecordTask thread.
+* @brief Function implementing the SendDataTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartRecordTask */
-void StartRecordTask(void *argument)
+/* USER CODE END Header_StartSendDataTask */
+void StartSendDataTask(void *argument)
 {
-  /* USER CODE BEGIN StartRecordTask */
+  /* USER CODE BEGIN StartSendDataTask */
   /* Infinite loop */
+
+
+  // variables to check which ADC buffer to use
+  uint8_t count0;
+  uint8_t count1;
+  uint8_t none_acquired;
+
+  // variables 
+  uint8_t loop = 0;
+  volatile uint8_t tx_data = 0;
+  uint16_t i = 0;
+  uint16_t j = 0;
+  uint16_t max_transmit_index = 0;
+  uint16_t amplification = 1;
+  uint32_t val = 0;
+
   for(;;)
   {
-    osDelay(1);
+    //wait for send data task to complete
+    osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
+
+    //check which adc buffer is available
+    count0 = osSemaphoreGetCount(ADC_Buffer0Sem04Handle);
+    count1 = osSemaphoreGetCount(ADC_Buffer1Sem05Handle);
+    none_acquired = 0;
+
+
+
+    //acquire whichever is available
+    if(count0 == 1) {
+      osSemaphoreAcquire(ADC_Buffer0Sem04Handle, osWaitForever);
+
+      //copy every other adc buffer
+      for (int i = 0; i < TRANSMIT_BUFFER_SIZE; i+=2) {
+        //adc_buffer_copy[i/2] = adc_buffer_0[i];
+        val = adc_buffer_0[i];
+        val -= 0x8000;
+        val *= amplification;
+        adc_buffer_copy[i/2] = val;
+        //adc_buffer_copy[i/2] = (adc_buffer_copy[i/2] - 0x8000) * amplification;
+      }
+
+      //release adc buffer
+      osSemaphoreRelease(ADC_Buffer0Sem04Handle);
+      
+    }
+    else if (count1 == 1) {
+      osSemaphoreAcquire(ADC_Buffer1Sem05Handle, osWaitForever);
+
+      //copy every other adc buffer
+      for (int i = 0; i < ADC_BUFFER_SIZE; i+=2) {
+        adc_buffer_copy[i/2] = adc_buffer_1[i];
+        adc_buffer_copy[i/2] = (adc_buffer_copy[i/2] - 0x8000) * amplification;
+      }
+
+      //release adc buffer
+      osSemaphoreRelease(ADC_Buffer1Sem05Handle);
+      
+    }
+    else {
+      none_acquired = 1;
+    }
+
+    //transmit data
+    if (!none_acquired) {
+
+      //fill transmit buffer with data
+      i = 0; //index of input buffer
+      j = 0; //index of output buffer
+      while (i < TRANSMIT_BUFFER_SIZE / 2) {
+
+    	if (i > 2040) {
+    		i++;
+    		i--;
+    	}
+        
+        //check if last 16 bits of data is the same as the escape char
+        if (!((adc_buffer_copy[i] & 0xFFFF) ^ ESCAPE_CHAR)) {
+          
+          //add escape char twice to indicate that it is actually the data being sent
+          transmit_buffer[j] = ESCAPE_CHAR >> 8;
+          j++;
+          transmit_buffer[j] = ESCAPE_CHAR & 0x00FF;
+          j++;
+          
+          transmit_buffer[j] = ESCAPE_CHAR >> 8;
+          j++;
+          transmit_buffer[j] = ESCAPE_CHAR & 0x00FF;
+          j++;
+
+          //processed 1 sample
+          i++;
+        }
+        else {
+
+          //say sample = 0x1234;
+
+          //add data to buffer
+          transmit_buffer[j] = adc_buffer_copy[i] >> 8; // high byte (0x12)
+          j++;
+          transmit_buffer[j] = adc_buffer_copy[i] & 0x00FF; // low byte (0x34)
+          j++;  
+
+          //processed 1 sample
+          i++;
+        }
+      }
+      max_transmit_index = j;
+
+      // First set of data
+      if(loop == 0){
+
+        //send escape character
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+
+        //send start char
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+        tx_data = 0xEE;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+      }
+
+      // Data in between
+      // TODO - For loop for number of samples of transmit_buffer
+      for(int k = 0; k < max_transmit_index; k++){
+
+        tx_data = transmit_buffer[k];
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+
+        if (k > max_transmit_index - 2) {
+        	k++;
+        	k--;
+        }
+      }
+      
+      loop++;
+
+
+      // Last set of data
+      if(loop >= 58){
+
+        //send escape char
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+
+        //send end char
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+        tx_data = 0xFE;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+
+        //restart record mode
+        loop = 0;
+        recording_mode = false;
+      }
+    }
   }
-  /* USER CODE END StartRecordTask */
+  /* USER CODE END StartSendDataTask */
 }
 
 /**

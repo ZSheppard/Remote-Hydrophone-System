@@ -56,6 +56,9 @@ default.size.stdout \
 OBJDUMP_LIST += \
 RTOS_Hydrophone.list \
 
+OBJCOPY_BIN += \
+RTOS_Hydrophone.bin \
+
 
 # All Target
 all: main-build
@@ -64,8 +67,8 @@ all: main-build
 main-build: RTOS_Hydrophone.elf secondary-outputs
 
 # Tool invocations
-RTOS_Hydrophone.elf RTOS_Hydrophone.map: $(OBJS) $(USER_OBJS) C:\Users\zachs\OneDrive\Documents\Beng\ Term\ 8\_Capstone\Capstone\Capstone\ Hydrophone\ Project\Remote_Hydrophone_Sys_Rtos\STM32H7A3ZITXQ_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "RTOS_Hydrophone.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"C:\Users\zachs\OneDrive\Documents\Beng Term 8\_Capstone\Capstone\Capstone Hydrophone Project\Remote_Hydrophone_Sys_Rtos\STM32H7A3ZITXQ_FLASH.ld" --specs=nosys.specs -Wl,-Map="RTOS_Hydrophone.map" -Wl,--gc-sections -static -L"C:\Users\zachs\OneDrive\Documents\Beng Term 8\_Capstone\Capstone\Capstone Hydrophone Project\Remote_Hydrophone_Sys_Rtos\Drivers\CMSIS\Lib\GCC" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+RTOS_Hydrophone.elf RTOS_Hydrophone.map: $(OBJS) $(USER_OBJS) C:\Users\sfinl\STM32CubeIDE\workspace_1.11.0\Hydrophone\ Microcontroller\Remote_Hydrophone_Sys_Rtos\STM32H7A3ZITXQ_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "RTOS_Hydrophone.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"C:\Users\sfinl\STM32CubeIDE\workspace_1.11.0\Hydrophone Microcontroller\Remote_Hydrophone_Sys_Rtos\STM32H7A3ZITXQ_FLASH.ld" --specs=nosys.specs -Wl,-Map="RTOS_Hydrophone.map" -Wl,--gc-sections -static -L"C:\Users\sfinl\STM32CubeIDE\workspace_1.11.0\Hydrophone Microcontroller\Remote_Hydrophone_Sys_Rtos\Drivers\CMSIS\Lib\GCC" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -79,12 +82,17 @@ RTOS_Hydrophone.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
+RTOS_Hydrophone.bin: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objcopy  -O binary $(EXECUTABLES) "RTOS_Hydrophone.bin"
+	@echo 'Finished building: $@'
+	@echo ' '
+
 # Other Targets
 clean:
-	-$(RM) RTOS_Hydrophone.elf RTOS_Hydrophone.list RTOS_Hydrophone.map default.size.stdout
+	-$(RM) RTOS_Hydrophone.bin RTOS_Hydrophone.elf RTOS_Hydrophone.list RTOS_Hydrophone.map default.size.stdout
 	-@echo ' '
 
-secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
+secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST) $(OBJCOPY_BIN)
 
 fail-specified-linker-script-missing:
 	@echo 'Error: Cannot find the specified linker script. Check the linker settings in the build configuration.'
