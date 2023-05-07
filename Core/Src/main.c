@@ -38,10 +38,19 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define ADC_BUFFER_SIZE 4096
-#define SEND_BUFFER_SIZE 245760/8
+//#define SEND_BUFFER_SIZE 245760/8//
+// FFT defines
 #define REAL_FFT_SIZE 4096
 #define FFT_SIZE (REAL_FFT_SIZE/2)
+
+// ADC Defines
+#define ADC_BUFFER_SIZE 4096
+
+//Transmit Defines
+#define TRANSMIT_BUFFER_SIZE ADC_BUFFER_SIZE
+#define ESCAPE_CHAR 0xFFFF
+#define START_CHAR 0xFFEE
+#define END_CHAR 0xFFFE
 
 /* USER CODE END PD */
 
@@ -56,6 +65,7 @@ DMA_HandleTypeDef hdma_adc1;
 
 TIM_HandleTypeDef htim1;
 
+UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart3;
 
 /* Definitions for defaultTask */
@@ -83,7 +93,7 @@ const osThreadAttr_t FFTTask_attributes = {
 osThreadId_t SendDataTaskHandle;
 const osThreadAttr_t SendDataTask_attributes = {
   .name = "SendDataTask",
-  .stack_size = 128 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityHigh1,
 };
 /* Definitions for AudioCapSem01 */
@@ -138,6 +148,12 @@ bool frequency_detected = false;
 // Variables for sending data
 int counter = 0; // Counter for counting how many times we send 1.875 seconds worth of data
 
+//local global buffer for copy of every other sample from the ADC
+volatile int32_t adc_buffer_copy[ADC_BUFFER_SIZE];
+
+// create global buffer to hold transmit data
+volatile uint8_t transmit_buffer[TRANSMIT_BUFFER_SIZE];
+
 
 /* USER CODE END PV */
 
@@ -149,6 +165,7 @@ static void MX_USB_OTG_HS_USB_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_UART4_Init(void);
 void StartDefaultTask(void *argument);
 void StartAudioCapTask(void *argument);
 void StartFFTTask(void *argument);
@@ -197,12 +214,13 @@ int main(void)
   MX_ADC1_Init();
   MX_USART3_UART_Init();
   MX_TIM1_Init();
+  MX_UART4_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_TIM_Base_Start(&htim1);
   HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_1);
 
-  float32_t maxValue;
+  //float32_t maxValue;
 
   // Initialize RFFT
   arm_rfft_fast_init_f32(&fft_handler, REAL_FFT_SIZE);
@@ -495,6 +513,54 @@ static void MX_TIM1_Init(void)
 }
 
 /**
+  * @brief UART4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_UART4_Init(void)
+{
+
+  /* USER CODE BEGIN UART4_Init 0 */
+
+  /* USER CODE END UART4_Init 0 */
+
+  /* USER CODE BEGIN UART4_Init 1 */
+
+  /* USER CODE END UART4_Init 1 */
+  huart4.Instance = UART4;
+  huart4.Init.BaudRate = 430000;
+  huart4.Init.WordLength = UART_WORDLENGTH_8B;
+  huart4.Init.StopBits = UART_STOPBITS_1;
+  huart4.Init.Parity = UART_PARITY_NONE;
+  huart4.Init.Mode = UART_MODE_TX_RX;
+  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart4.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart4.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart4.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_HalfDuplex_Init(&huart4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart4, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart4, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN UART4_Init 2 */
+
+  /* USER CODE END UART4_Init 2 */
+
+}
+
+/**
   * @brief USART3 Initialization Function
   * @param None
   * @retval None
@@ -732,6 +798,8 @@ bool FrequencyDetected(float32_t data[REAL_FFT_SIZE])
 		{
 			return false;
 		}
+
+	//add return statement
 }
 
 /**
@@ -808,14 +876,12 @@ void StartAudioCapTask(void *argument)
   //set initial adc buffer
   uint32_t adc_buffer_num = 0;
 
-
-
   /* Infinite loop */
   for(;;)
   {
 
 	  //set record mode REMOVE, THIS IS FOR TESTING ONLY
-	  recording_mode = false;
+	  //recording_mode = false;
 
 	  //wait for fft or data sending task to complete
 	  //osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
@@ -837,13 +903,16 @@ void StartAudioCapTask(void *argument)
       //check for record mode
       if (recording_mode) {
 
-        //send the data
+        // Send the data
+        osSemaphoreRelease(SendDataSem03Handle);
       }
       else  {
-
+        
         // start fft task on adc buffer 1
         osSemaphoreRelease(FFTSem02Handle);
       }
+
+      // Coming back from Send Data do we need to redo initializations?
 
       //wait for buffer to fill
       while(flag_value != true);
@@ -872,13 +941,16 @@ void StartAudioCapTask(void *argument)
       //check for record mode
       if (recording_mode) {
 
-        //send the data
+        // Send the data
+        osSemaphoreRelease(SendDataSem03Handle);
       }
       else  {
 
         // start fft task on adc buffer 1
         osSemaphoreRelease(FFTSem02Handle);
       }
+
+      // Coming back from Send Data do we need to redo initializations?
 
       //wait for buffer to fill
       while(flag_value != true);
@@ -893,42 +965,6 @@ void StartAudioCapTask(void *argument)
       //switch to other buffer on next loop
       adc_buffer_num = 0;
     }
-
-    //old code 
-	  // // ADC captures data for sending data
-	  // if (recording_mode)
-		//   HAL_ADC_Start_DMA(&hadc1, send_buffer_0, SEND_BUFFER_SIZE);
-	  // // ADC captures data for FFT
-	  // else {
-		//   HAL_ADC_Start_DMA(&hadc1, adc_buffer, ADC_BUFFER_SIZE);
-    // }
-
-	  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
-
-	  // if(recording_mode)
-	  // {
-		//   // TODO Call FFT function to detect frequencies
-
-		//   // TODO give send data task array of thew correct data type
-    //   // TODO needs to go in send data task
-		//   for(int i = 0; i < SEND_BUFFER_SIZE; i++){
-		// 	  //send_buffer_float[i] = send_buffer_0[i]; 
-		//   }
-
-		//   // Start send data task
-		//   osSemaphoreRelease(SendDataSem03Handle);
-	  // }
-	  // else
-	  // {
-
-		//   // Convert samples to float as required by FFT
-    //   // TODO needs to go in FFT task
-		//   // for(int i = 0; i < REAL_FFT_SIZE; i++){
-		// 	//   adc_buffer_float[i] = adc_buffer[i];
-		//   // }
-		//   // Check if data is whale or not
-		//   osSemaphoreRelease(FFTSem02Handle);
-	  // }
   }
 
   // In case we accidentally exit from task loop
@@ -997,16 +1033,16 @@ void StartFFTTask(void *argument)
     if (!none_acquired) {
       
       /* Reset frequency_detected bool */
-      //frequency_detected = false;
+      //frequency_detected = false; //not needed gets reasigned in frequency detected function
 
       /* Call FFT function that returns true if freqs between 0-8kHz are detected */
       frequency_detected = FrequencyDetected(adc_buffer_float);
 
       // TODO second frequency detected is redundant
-      if(frequency_detected == true){
-        // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
-        // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-      }
+      // if(frequency_detected == true){
+      //   // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
+      //   // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+      // }
 
       if(frequency_detected == true){
         recording_mode = true;
@@ -1034,30 +1070,167 @@ void StartSendDataTask(void *argument)
 {
   /* USER CODE BEGIN StartSendDataTask */
   /* Infinite loop */
+
+
+  // variables to check which ADC buffer to use
+  uint8_t count0;
+  uint8_t count1;
+  uint8_t none_acquired;
+
+  // variables 
+  uint8_t loop = 0;
+  volatile uint8_t tx_data = 0;
+  uint16_t i = 0;
+  uint16_t j = 0;
+  uint16_t max_transmit_index = 0;
+  uint16_t amplification = 1;
+  uint32_t val = 0;
+
   for(;;)
   {
-	//wait for send data task to complete
-	osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
+    //wait for send data task to complete
+    osSemaphoreAcquire(SendDataSem03Handle, osWaitForever);
 
-	// TODO modify buffer to add escape characters
+    //check which adc buffer is available
+    count0 = osSemaphoreGetCount(ADC_Buffer0Sem04Handle);
+    count1 = osSemaphoreGetCount(ADC_Buffer1Sem05Handle);
+    none_acquired = 0;
 
-	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
-	// Sending data via UART
-	// TODO send buffer of uint8_t not float
-	//HAL_UART_Transmit_DMA(&huart3, send_buffer_float, SEND_BUFFER_SIZE);
 
-	// get and send data for 8 cycles
-	counter++;
-	if (counter == 8)
-	{
-		counter = 0;
-		recording_mode = false;
-		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-	}
 
-	//start audio cap task
-	osSemaphoreRelease(AudioCapSem01Handle);
+    //acquire whichever is available
+    if(count0 == 1) {
+      osSemaphoreAcquire(ADC_Buffer0Sem04Handle, osWaitForever);
 
+      //copy every other adc buffer
+      for (int i = 0; i < TRANSMIT_BUFFER_SIZE; i+=2) {
+        //adc_buffer_copy[i/2] = adc_buffer_0[i];
+        val = adc_buffer_0[i];
+        val -= 0x8000;
+        val *= amplification;
+        adc_buffer_copy[i/2] = val;
+        //adc_buffer_copy[i/2] = (adc_buffer_copy[i/2] - 0x8000) * amplification;
+      }
+
+      //release adc buffer
+      osSemaphoreRelease(ADC_Buffer0Sem04Handle);
+      
+    }
+    else if (count1 == 1) {
+      osSemaphoreAcquire(ADC_Buffer1Sem05Handle, osWaitForever);
+
+      //copy every other adc buffer
+      for (int i = 0; i < ADC_BUFFER_SIZE; i+=2) {
+        adc_buffer_copy[i/2] = adc_buffer_1[i];
+        adc_buffer_copy[i/2] = (adc_buffer_copy[i/2] - 0x8000) * amplification;
+      }
+
+      //release adc buffer
+      osSemaphoreRelease(ADC_Buffer1Sem05Handle);
+      
+    }
+    else {
+      none_acquired = 1;
+    }
+
+    //transmit data
+    if (!none_acquired) {
+
+      //fill transmit buffer with data
+      i = 0; //index of input buffer
+      j = 0; //index of output buffer
+      while (i < TRANSMIT_BUFFER_SIZE / 2) {
+
+    	if (i > 2040) {
+    		i++;
+    		i--;
+    	}
+        
+        //check if last 16 bits of data is the same as the escape char
+        if (!((adc_buffer_copy[i] & 0xFFFF) ^ ESCAPE_CHAR)) {
+          
+          //add escape char twice to indicate that it is actually the data being sent
+          transmit_buffer[j] = ESCAPE_CHAR >> 8;
+          j++;
+          transmit_buffer[j] = ESCAPE_CHAR & 0x00FF;
+          j++;
+          
+          transmit_buffer[j] = ESCAPE_CHAR >> 8;
+          j++;
+          transmit_buffer[j] = ESCAPE_CHAR & 0x00FF;
+          j++;
+
+          //processed 1 sample
+          i++;
+        }
+        else {
+
+          //say sample = 0x1234;
+
+          //add data to buffer
+          transmit_buffer[j] = adc_buffer_copy[i] >> 8; // high byte (0x12)
+          j++;
+          transmit_buffer[j] = adc_buffer_copy[i] & 0x00FF; // low byte (0x34)
+          j++;  
+
+          //processed 1 sample
+          i++;
+        }
+      }
+      max_transmit_index = j;
+
+      // First set of data
+      if(loop == 0){
+
+        //send escape character
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+
+        //send start char
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+        tx_data = 0xEE;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+      }
+
+      // Data in between
+      // TODO - For loop for number of samples of transmit_buffer
+      for(int k = 0; k < max_transmit_index; k++){
+
+        tx_data = transmit_buffer[k];
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+
+        if (k > max_transmit_index - 2) {
+        	k++;
+        	k--;
+        }
+      }
+      
+      loop++;
+
+
+      // Last set of data
+      if(loop >= 58){
+
+        //send escape char
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+
+        //send end char
+        tx_data = 0xFF;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+        tx_data = 0xFE;
+        HAL_UART_Transmit(&huart4, (uint8_t *)&tx_data, 1, HAL_MAX_DELAY);
+
+        //restart record mode
+        loop = 0;
+        recording_mode = false;
+      }
+    }
   }
   /* USER CODE END StartSendDataTask */
 }
