@@ -38,9 +38,10 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define adc_buff_size 4096
-#define send_buff_size 245760/8
-#define FFT_SIZE (adc_buff_size/2)
+#define ADC_BUFFER_SIZE 4096
+#define SEND_BUFFER_SIZE 245760/8
+#define REAL_FFT_SIZE 4096
+#define FFT_SIZE (REAL_FFT_SIZE/2)
 
 /* USER CODE END PD */
 
@@ -56,7 +57,6 @@ DMA_HandleTypeDef hdma_adc1;
 TIM_HandleTypeDef htim1;
 
 UART_HandleTypeDef huart3;
-DMA_HandleTypeDef hdma_usart3_tx;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -70,21 +70,21 @@ osThreadId_t AudioCapTaskHandle;
 const osThreadAttr_t AudioCapTask_attributes = {
   .name = "AudioCapTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityHigh,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for FFTTask */
 osThreadId_t FFTTaskHandle;
 const osThreadAttr_t FFTTask_attributes = {
   .name = "FFTTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for SendDataTask */
 osThreadId_t SendDataTaskHandle;
 const osThreadAttr_t SendDataTask_attributes = {
   .name = "SendDataTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
+  .priority = (osPriority_t) osPriorityHigh1,
 };
 /* Definitions for AudioCapSem01 */
 osSemaphoreId_t AudioCapSem01Handle;
@@ -101,33 +101,42 @@ osSemaphoreId_t SendDataSem03Handle;
 const osSemaphoreAttr_t SendDataSem03_attributes = {
   .name = "SendDataSem03"
 };
+/* Definitions for ADC_Buffer0Sem04 */
+osSemaphoreId_t ADC_Buffer0Sem04Handle;
+const osSemaphoreAttr_t ADC_Buffer0Sem04_attributes = {
+  .name = "ADC_Buffer0Sem04"
+};
+/* Definitions for ADC_Buffer1Sem05 */
+osSemaphoreId_t ADC_Buffer1Sem05Handle;
+const osSemaphoreAttr_t ADC_Buffer1Sem05_attributes = {
+  .name = "ADC_Buffer1Sem05"
+};
 /* USER CODE BEGIN PV */
 
 // Variables for ADC Conversion
-uint32_t adc_buffer[adc_buff_size];
-float32_t adc_buffer_float[adc_buff_size];
-uint32_t send_buffer[send_buff_size];
-float32_t send_buffer_float[send_buff_size];
-
+uint32_t adc_buffer[ADC_BUFFER_SIZE];
+float32_t adc_buffer_float[ADC_BUFFER_SIZE];
+uint32_t adc_buffer_0[ADC_BUFFER_SIZE];
+uint32_t adc_buffer_1[ADC_BUFFER_SIZE];
 bool recording_mode = false;
 bool flag_value, transfer_complete;
 
 // Variables for FFT
-uint32_t fft_real_length = 4096;			// Value for FFT initialization
-float32_t fft_buffer[adc_buff_size];    //fft_buffer be twice as large to account for complex values per sample
-float32_t bin[FFT_SIZE];				// Array of bin values
-uint32_t bin_int[FFT_SIZE];				// Array of bin integer values
-int bin_point = 0;						// Used to point to element in array
-int offset = 165; 						//variable noisefloor offset
+//uint32_t fft_real_length = 4096;			      // Value for FFT initialization
+float32_t fft_buffer[REAL_FFT_SIZE];          //fft_buffer be twice as large to account for complex values per sample
+float32_t bin[FFT_SIZE];				              // Array of bin values
+uint32_t bin_int[FFT_SIZE];				            // Array of bin integer values
+int bin_point = 0;						                // Used to point to element in array
+int offset = 165; 						                //variable noisefloor offset
 uint32_t expected_bin = 511, testIndex = 0;		// Expected Bin value of frequency Input and index comparator
-float32_t maxValue;						// Maximum Magnitude found in bin array
-uint32_t maxIndex = 0;					// Index location of maximum magnitude
-uint32_t ifftFlag = 0;					// 0 for FFT, 1 for inverse FFT
-uint32_t doBitReverse = 1;				// Bit reversal parameter
+float32_t maxValue;						                // Maximum Magnitude found in bin array
+uint32_t maxIndex = 0;					              // Index location of maximum magnitude
+uint32_t ifftFlag = 0;					              // 0 for FFT, 1 for inverse FFT
+uint32_t doBitReverse = 1;				            // Bit reversal parameter
 bool frequency_detected = false;
 
-// Counter for counting how many times we send 1.875 seconds worth of data
-int counter = 0;
+// Variables for sending data
+int counter = 0; // Counter for counting how many times we send 1.875 seconds worth of data
 
 
 /* USER CODE END PV */
@@ -146,7 +155,7 @@ void StartFFTTask(void *argument);
 void StartSendDataTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-bool FrequencyDetected(float32_t data[adc_buff_size]);
+bool FrequencyDetected(float32_t data[REAL_FFT_SIZE]);
 float32_t Magnitude(float32_t real, float32_t compl);
 /* USER CODE END PFP */
 
@@ -196,7 +205,7 @@ int main(void)
   float32_t maxValue;
 
   // Initialize RFFT
-  arm_rfft_fast_init_f32(&fft_handler, adc_buff_size);
+  arm_rfft_fast_init_f32(&fft_handler, REAL_FFT_SIZE);
 
   /* USER CODE END 2 */
 
@@ -216,6 +225,12 @@ int main(void)
 
   /* creation of SendDataSem03 */
   SendDataSem03Handle = osSemaphoreNew(1, 1, &SendDataSem03_attributes);
+
+  /* creation of ADC_Buffer0Sem04 */
+  ADC_Buffer0Sem04Handle = osSemaphoreNew(1, 1, &ADC_Buffer0Sem04_attributes);
+
+  /* creation of ADC_Buffer1Sem05 */
+  ADC_Buffer1Sem05Handle = osSemaphoreNew(1, 1, &ADC_Buffer1Sem05_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
 
@@ -561,9 +576,6 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
-  /* DMA1_Stream1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
 
 }
 
@@ -662,7 +674,7 @@ static void MX_GPIO_Init(void)
  * @param
  * @retval boolean true or false
  */
-bool FrequencyDetected(float32_t data[adc_buff_size])
+bool FrequencyDetected(float32_t data[REAL_FFT_SIZE])
 {
 	// Process the data through the RFFT module. Will output elements that are Real and Imaginary
 	// in fft_bufer as a single array same size as data[].
@@ -673,7 +685,7 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 	bin_point = 0;
 
 	// Calculate magnitude for each bin using real and Imaginary numbers from fft_buffer output
-	 for (int i=0; i< adc_buff_size; i=i+2) {
+	 for (int i=0; i< REAL_FFT_SIZE; i=i+2) {
 
 		bin[bin_point] =((Magnitude(fft_buffer[i], fft_buffer[i+1])))-offset;
 		// bin[bin_point has chance of rolling back if magnitude is not greater than offset (165)
@@ -701,7 +713,7 @@ bool FrequencyDetected(float32_t data[adc_buff_size])
 	bool threshold_crossed = false;
 
 	// Going through bin array, checking if a magnitude crosses threshold of 40
-	for(int j=1; j < (adc_buff_size/2); j++){
+	for(int j=1; j < (FFT_SIZE); j++){
 
 		if(bin[j] >= 40)
 		{
@@ -785,55 +797,138 @@ void StartDefaultTask(void *argument)
 void StartAudioCapTask(void *argument)
 {
   /* USER CODE BEGIN StartAudioCapTask */
+  
+  //Fill ADC_Buffer1
+  HAL_ADC_Start_DMA(&hadc1, adc_buffer_1, ADC_BUFFER_SIZE);
+
+  //wait for it to finish
+  while(flag_value != true);
+  flag_value = false;
+
+  //set initial adc buffer
+  uint32_t adc_buffer_num = 0;
+
+
+
   /* Infinite loop */
   for(;;)
   {
+
+	  //set record mode REMOVE, THIS IS FOR TESTING ONLY
+	  recording_mode = false;
+
 	  //wait for fft or data sending task to complete
-	  osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
+	  //osSemaphoreAcquire(AudioCapSem01Handle, osWaitForever);
 
 	  /* Test Pin */
 	  // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
 	  // osDelay(500);
 
-	  // Start ADC
+	  // Start ADC using alternating buffers
+    if(adc_buffer_num == 0) {
 
-	  // ADC captures data for sending data
-	  if (recording_mode)
-		  HAL_ADC_Start_DMA(&hadc1, send_buffer, send_buff_size);
-	  // ADC captures data for FFT
-	  else
-		  HAL_ADC_Start_DMA(&hadc1, adc_buffer, adc_buff_size);
+      //obtain adc_buffer_0
+      osSemaphoreAcquire(ADC_Buffer0Sem04Handle, osWaitForever);
 
-	  // Wait for adc_buffer to fill
-	  while(flag_value != true);
-	  flag_value = false;
+      //set buffer to fill
+		  HAL_ADC_Start_DMA(&hadc1, adc_buffer_0, ADC_BUFFER_SIZE);
 
-	  // Stop ADC
-	  HAL_ADC_Stop_DMA(&hadc1);
+      //release tasks to process buffer 1
+      //check for record mode
+      if (recording_mode) {
+
+        //send the data
+      }
+      else  {
+
+        // start fft task on adc buffer 1
+        osSemaphoreRelease(FFTSem02Handle);
+      }
+
+      //wait for buffer to fill
+      while(flag_value != true);
+      flag_value = false;
+
+      // Stop ADC
+      HAL_ADC_Stop_DMA(&hadc1);
+      
+      //release adc_buffer_0
+      osSemaphoreRelease(ADC_Buffer0Sem04Handle);
+
+      //switch to other buffer on next loop
+      adc_buffer_num = 1;
+
+      //Wait for FFT Task to Finish
+    }
+    else {
+
+      //obtain adc_buffer_1
+      osSemaphoreAcquire(ADC_Buffer1Sem05Handle, osWaitForever);
+
+      //set buffer to fill
+		  HAL_ADC_Start_DMA(&hadc1, adc_buffer_1, ADC_BUFFER_SIZE);
+
+      //release tasks to process buffer 0
+      //check for record mode
+      if (recording_mode) {
+
+        //send the data
+      }
+      else  {
+
+        // start fft task on adc buffer 1
+        osSemaphoreRelease(FFTSem02Handle);
+      }
+
+      //wait for buffer to fill
+      while(flag_value != true);
+      flag_value = false;
+
+      // Stop ADC
+      HAL_ADC_Stop_DMA(&hadc1);
+
+      //release adc_buffer_1
+      osSemaphoreRelease(ADC_Buffer1Sem05Handle);
+
+      //switch to other buffer on next loop
+      adc_buffer_num = 0;
+    }
+
+    //old code 
+	  // // ADC captures data for sending data
+	  // if (recording_mode)
+		//   HAL_ADC_Start_DMA(&hadc1, send_buffer_0, SEND_BUFFER_SIZE);
+	  // // ADC captures data for FFT
+	  // else {
+		//   HAL_ADC_Start_DMA(&hadc1, adc_buffer, ADC_BUFFER_SIZE);
+    // }
 
 	  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
 
-	  if(recording_mode)
-	  {
-		  // TODO Call FFT function to detect frequencies
+	  // if(recording_mode)
+	  // {
+		//   // TODO Call FFT function to detect frequencies
 
-		  // TODO give send data task array of thew correct data type
-		  for(int i = 0; i < send_buff_size; i++){
-			  send_buffer_float[i] = send_buffer[i];
-		  }
+		//   // TODO give send data task array of thew correct data type
+    //   // TODO needs to go in send data task
+		//   for(int i = 0; i < SEND_BUFFER_SIZE; i++){
+		// 	  //send_buffer_float[i] = send_buffer_0[i]; 
+		//   }
 
-		  // Start send data task
-		  osSemaphoreRelease(SendDataSem03Handle);
-	  }
-	  else
-	  {
-		  // Convert samples to float as required by FFT
-		  for(int i = 0; i < adc_buff_size; i++){
-			  adc_buffer_float[i] = adc_buffer[i];
-		  }
-		  // Check if data is whale or not
-		  osSemaphoreRelease(FFTSem02Handle);
-	  }
+		//   // Start send data task
+		//   osSemaphoreRelease(SendDataSem03Handle);
+	  // }
+	  // else
+	  // {
+
+		//   // Convert samples to float as required by FFT
+    //   // TODO needs to go in FFT task
+		//   // for(int i = 0; i < REAL_FFT_SIZE; i++){
+		// 	//   adc_buffer_float[i] = adc_buffer[i];
+		//   // }
+		//   // Check if data is whale or not
+		//   osSemaphoreRelease(FFTSem02Handle);
+	  // }
   }
 
   // In case we accidentally exit from task loop
@@ -851,33 +946,76 @@ void StartAudioCapTask(void *argument)
 void StartFFTTask(void *argument)
 {
   /* USER CODE BEGIN StartFFTTask */
+
+  uint32_t count0;
+  uint32_t count1;
+  uint32_t none_acquired;
+
   /* Infinite loop */
   for(;;)
   {
-	 // wait for audio cap task to complete
-	 osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
-	 HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1);
-	 //osDelay(500);
 
-	 /* Reset frequency_detected bool */
-	 //frequency_detected = false;
+    // wait for audio cap task to tell this task to start
+    osSemaphoreAcquire(FFTSem02Handle, osWaitForever);
+    HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1);
+	  //osDelay(500);
 
-	 /* Call FFT function that returns true if freqs between 0-8kHz are detected */
-	 frequency_detected = FrequencyDetected(adc_buffer_float);
+    //check which adc buffer is available
+    count0 = osSemaphoreGetCount(ADC_Buffer0Sem04Handle);
+    count1 = osSemaphoreGetCount(ADC_Buffer1Sem05Handle);
+    none_acquired = 0;
 
-	 // TODO second frequency detected is redundant
-	 if(frequency_detected == true){
-		 // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
-		 // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-	 }
+    //acquire whichever is available
+    if(count0 == 1) {
+      osSemaphoreAcquire(ADC_Buffer0Sem04Handle, osWaitForever);
 
-	 if(frequency_detected == true){
-		 recording_mode = true;
-		 // release semaphore for record task
-	 }
+      // Convert samples to float as required by FFT
+		  for(int i = 0; i < REAL_FFT_SIZE; i++){
+			  adc_buffer_float[i] = adc_buffer_0[i];
+		  }
+      
+      //release adc buffer
+      osSemaphoreRelease(ADC_Buffer0Sem04Handle);
+      
+    }
+    else if (count1 == 1) {
+      osSemaphoreAcquire(ADC_Buffer1Sem05Handle, osWaitForever);
 
-	 //start audio cap task
-	 osSemaphoreRelease(AudioCapSem01Handle);
+      // Convert samples to float as required by FFT
+      for(int i = 0; i < REAL_FFT_SIZE; i++){
+			  adc_buffer_float[i] = adc_buffer_1[i];
+		  }
+
+      //release adc buffer
+      osSemaphoreRelease(ADC_Buffer1Sem05Handle);
+      
+    }
+    else {
+      none_acquired = 1;
+    }
+
+    if (!none_acquired) {
+      
+      /* Reset frequency_detected bool */
+      //frequency_detected = false;
+
+      /* Call FFT function that returns true if freqs between 0-8kHz are detected */
+      frequency_detected = FrequencyDetected(adc_buffer_float);
+
+      // TODO second frequency detected is redundant
+      if(frequency_detected == true){
+        // HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
+        // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+      }
+
+      if(frequency_detected == true){
+        recording_mode = true;
+        // release semaphore for record task
+      }  
+
+      //start audio cap task -- should always be running, get rid of this
+      //osSemaphoreRelease(AudioCapSem01Handle);
+    }
   }
 
   // In case we accidentally exit from task loop
@@ -906,7 +1044,7 @@ void StartSendDataTask(void *argument)
 	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
 	// Sending data via UART
 	// TODO send buffer of uint8_t not float
-	HAL_UART_Transmit_DMA(&huart3, send_buffer_float, send_buff_size);
+	//HAL_UART_Transmit_DMA(&huart3, send_buffer_float, SEND_BUFFER_SIZE);
 
 	// get and send data for 8 cycles
 	counter++;
