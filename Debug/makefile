@@ -38,34 +38,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := RTOS_Hydrophone
+BUILD_ARTIFACT_NAME := Remote_Hydrophone_Sys_Rtos
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-RTOS_Hydrophone.elf \
+Remote_Hydrophone_Sys_Rtos.elf \
 
 MAP_FILES += \
-RTOS_Hydrophone.map \
+Remote_Hydrophone_Sys_Rtos.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-RTOS_Hydrophone.list \
+Remote_Hydrophone_Sys_Rtos.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: RTOS_Hydrophone.elf secondary-outputs
+main-build: Remote_Hydrophone_Sys_Rtos.elf secondary-outputs
 
 # Tool invocations
-RTOS_Hydrophone.elf RTOS_Hydrophone.map: $(OBJS) $(USER_OBJS) C:\Users\zachs\OneDrive\Documents\Beng\ Term\ 8\_Capstone\Capstone\Capstone\ Hydrophone\ Project\Remote_Hydrophone_Sys_Rtos\STM32H7A3ZITXQ_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "RTOS_Hydrophone.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"C:\Users\zachs\OneDrive\Documents\Beng Term 8\_Capstone\Capstone\Capstone Hydrophone Project\Remote_Hydrophone_Sys_Rtos\STM32H7A3ZITXQ_FLASH.ld" --specs=nosys.specs -Wl,-Map="RTOS_Hydrophone.map" -Wl,--gc-sections -static -L"C:\Users\zachs\OneDrive\Documents\Beng Term 8\_Capstone\Capstone\Capstone Hydrophone Project\Remote_Hydrophone_Sys_Rtos\Drivers\CMSIS\Lib\GCC" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Remote_Hydrophone_Sys_Rtos.elf Remote_Hydrophone_Sys_Rtos.map: $(OBJS) $(USER_OBJS) /Users/faran/Local-Repo/STM32/Capstone/Remote_Hydrophone_Sys_Rtos/STM32H7A3ZITXQ_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "Remote_Hydrophone_Sys_Rtos.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"/Users/faran/Local-Repo/STM32/Capstone/Remote_Hydrophone_Sys_Rtos/STM32H7A3ZITXQ_FLASH.ld" --specs=nosys.specs -Wl,-Map="Remote_Hydrophone_Sys_Rtos.map" -Wl,--gc-sections -static -L"/Users/faran/Local-Repo/STM32/Capstone/Remote_Hydrophone_Sys_Rtos/Drivers/CMSIS/Lib/GCC" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -74,14 +74,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-RTOS_Hydrophone.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "RTOS_Hydrophone.list"
+Remote_Hydrophone_Sys_Rtos.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "Remote_Hydrophone_Sys_Rtos.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) RTOS_Hydrophone.elf RTOS_Hydrophone.list RTOS_Hydrophone.map default.size.stdout
+	-$(RM) Remote_Hydrophone_Sys_Rtos.elf Remote_Hydrophone_Sys_Rtos.list Remote_Hydrophone_Sys_Rtos.map default.size.stdout
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)

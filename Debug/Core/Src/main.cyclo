@@ -1,0 +1,17 @@
+main.c:147:5:main	1
+main.c:258:6:SystemClock_Config	4
+main.c:325:13:MX_ADC1_Init	4
+main.c:393:13:MX_TIM1_Init	7
+main.c:473:13:MX_USART3_UART_Init	5
+main.c:521:13:MX_USB_OTG_HS_USB_Init	1
+main.c:540:13:MX_DMA_Init	1
+main.c:558:13:MX_GPIO_Init	1
+main.c:644:6:FrequencyDetected	6
+main.c:709:11:Magnitude	2
+main.c:728:6:HAL_ADC_ConvCpltCallback	1
+main.c:744:6:StartDefaultTask	1
+main.c:764:6:StartAudioCapTask	3
+main.c:807:6:StartFFTTask	2
+main.c:852:6:StartRecordTask	1
+main.c:871:6:HAL_TIM_PeriodElapsedCallback	2
+main.c:888:6:Error_Handler	1
