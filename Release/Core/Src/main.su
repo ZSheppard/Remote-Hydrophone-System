@@ -1,0 +1,11 @@
+../Core/Src/main.c:767:6:StartDefaultTask	0	static
+../Core/Src/main.c:787:6:StartAudioCapTask	16	static
+../Core/Src/main.c:891:6:StartSendDataTask	8	static
+../Core/Src/main.c:278:6:SystemClock_Config	120	static,ignoring_inline_asm
+../Core/Src/main.c:162:5:main	152	static,ignoring_inline_asm
+../Core/Src/main.c:732:11:Magnitude	8	static
+../Core/Src/main.c:667:6:FrequencyDetected	24	static
+../Core/Src/main.c:849:6:StartFFTTask	8	static
+../Core/Src/main.c:751:6:HAL_ADC_ConvCpltCallback	8	static
+../Core/Src/main.c:926:6:HAL_TIM_PeriodElapsedCallback	0	static
+../Core/Src/main.c:943:6:Error_Handler	0	static,ignoring_inline_asm

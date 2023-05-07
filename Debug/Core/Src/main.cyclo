@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 main.c:147:5:main	1
 main.c:258:6:SystemClock_Config	4
 main.c:325:13:MX_ADC1_Init	4
@@ -15,3 +16,23 @@ main.c:807:6:StartFFTTask	2
 main.c:852:6:StartRecordTask	1
 main.c:871:6:HAL_TIM_PeriodElapsedCallback	2
 main.c:888:6:Error_Handler	1
+=======
+main.c:188:5:main	1
+main.c:309:6:SystemClock_Config	4
+main.c:372:13:MX_ADC1_Init	4
+main.c:440:13:MX_TIM1_Init	7
+main.c:520:13:MX_UART4_Init	5
+main.c:568:13:MX_USART3_UART_Init	5
+main.c:616:13:MX_USB_OTG_HS_USB_Init	1
+main.c:635:13:MX_DMA_Init	1
+main.c:653:13:MX_GPIO_Init	1
+main.c:743:6:FrequencyDetected	6
+main.c:810:11:Magnitude	2
+main.c:829:6:HAL_ADC_ConvCpltCallback	1
+main.c:845:6:StartDefaultTask	1
+main.c:865:6:StartAudioCapTask	7
+main.c:982:6:StartFFTTask	7
+main.c:1069:6:StartSendDataTask	17
+main.c:1246:6:HAL_TIM_PeriodElapsedCallback	2
+main.c:1263:6:Error_Handler	1
+>>>>>>> b6a4c61421419d35c6a5e304560b93442d838763

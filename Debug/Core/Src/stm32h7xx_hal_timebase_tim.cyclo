@@ -1,3 +1,8 @@
 stm32h7xx_hal_timebase_tim.c:41:19:HAL_InitTick	4
+<<<<<<< HEAD
 stm32h7xx_hal_timebase_tim.c:113:6:HAL_SuspendTick	1
 stm32h7xx_hal_timebase_tim.c:125:6:HAL_ResumeTick	1
+=======
+stm32h7xx_hal_timebase_tim.c:114:6:HAL_SuspendTick	1
+stm32h7xx_hal_timebase_tim.c:126:6:HAL_ResumeTick	1
+>>>>>>> b6a4c61421419d35c6a5e304560b93442d838763
