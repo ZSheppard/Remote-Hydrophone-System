@@ -43,6 +43,10 @@
 #define REAL_FFT_SIZE 4096
 #define FFT_SIZE (REAL_FFT_SIZE/2)
 
+// Low-pass filter parameters
+#define SAMPLE_RATE 8000 // Sample rate in Hz
+#define CUTOFF_FREQ 8000  // Cutoff frequency in Hz
+
 // ADC Defines
 #define ADC_BUFFER_SIZE 4096
 
@@ -172,8 +176,11 @@ void StartFFTTask(void *argument);
 void StartSendDataTask(void *argument);
 
 /* USER CODE BEGIN PFP */
+
 bool FrequencyDetected(float32_t data[REAL_FFT_SIZE]);
 float32_t Magnitude(float32_t real, float32_t compl);
+void low_pass_filter(float32_t* input, float32_t* output, uint32_t num_samples);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -820,6 +827,29 @@ float32_t Magnitude(float32_t real, float32_t compl)
 	magnitude = 20* (log_output);
 	return magnitude;
 }
+// low_pass_filter(ADC_BUFFER_0, ADC_BUFFER_0, 4096)
+
+void low_pass_filter(float32_t* input, float32_t* output, uint32_t num_samples) {
+  float32_t32_t alpha = 2 * PI * CUTOFF_FREQ / SAMPLE_RATE;
+  float32_t32_t b0 = (1 - arm_cos_f32(alpha)) / 2;
+  float32_t32_t b1 = 1 - arm_cos_f32(alpha);
+  float32_t32_t b2 = (1 - arm_cos_f32(alpha)) / 2;
+  float32_t32_t a1 = -2 * arm_cos_f32(alpha);
+  float32_t32_t a2 = arm_cos_f32(alpha) - 1;
+
+  // Initialize filter state variables
+  float32_t32_t x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+
+  // Apply the filter to the input samples
+  for (uint32_t i = 0; i < num_samples; i++) {
+    output[i] = b0 * input[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1;
+    x1 = input[i];
+    y2 = y1;
+    y1 = output[i];
+  }
+}
+
 
 /**
  * @brief This function executes when adc buffer is full setting flag true
@@ -1101,6 +1131,9 @@ void StartSendDataTask(void *argument)
     //acquire whichever is available
     if(count0 == 1) {
       osSemaphoreAcquire(ADC_Buffer0Sem04Handle, osWaitForever);
+
+      // new lowpass filter  : TO TEST
+      low_pass_filter(ADC_BUFFER_0, ADC_BUFFER_0, 4096);
 
       //copy every other adc buffer
       for (int i = 0; i < TRANSMIT_BUFFER_SIZE; i+=2) {
